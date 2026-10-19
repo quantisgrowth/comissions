@@ -29,6 +29,7 @@ jobs:
           node --check dist/auth.js
           node checks/sales.cjs
           node checks/access.cjs
+          node checks/users.cjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
