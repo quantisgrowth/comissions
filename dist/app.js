@@ -1,6 +1,6 @@
 const moduleNames=['Visão geral','Empresas','Contratos','Recebíveis','Comissões','Produtos e regras','Metas','Usuários e acessos'];
-function accessibleModules(){const u=user();return u.role==='Administrador'?moduleNames:(u.modules||(u.role==='Gestor'?moduleNames.slice(0,7):u.role==='Vendedor'?['Visão geral','Contratos','Comissões']:['Comissões'])).filter(m=>moduleNames.includes(m)&&m!=='Usuários e acessos');}
-function moduleLabel(m){return !canManage()?({'Visão geral':'Meu painel','Contratos':'Minhas vendas','Comissões':'Minhas comissões'}[m]||m):m;}
+function accessibleModules(){const u=user();return u.role==='Administrador'?moduleNames:(u.modules||(u.role==='Gestor'?moduleNames.slice(0,7):['Vendedor','Desenvolvedor'].includes(u.role)?['Visão geral','Contratos','Comissões']:['Comissões'])).filter(m=>moduleNames.includes(m)&&m!=='Usuários e acessos');}
+function moduleLabel(m){return !canManage()?({'Visão geral':'Meu painel','Contratos':user().role==='Desenvolvedor'?'Meus contratos':'Minhas vendas','Comissões':'Minhas comissões'}[m]||m):m;}
 function canSell(){return accessibleModules().includes('Contratos')&&(canManage()||user().role==='Vendedor');}
 const money=n=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(n),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const defaultRules={first:0,next:0,setup:0,devFirst:0,devSetup:0,months:6};
