@@ -1,37 +1,32 @@
 # Comissions
 
-Protótipo de gestão de contratos, recebíveis, metas e comissões para várias empresas do mesmo grupo.
+Gestão de contratos, recebíveis, metas e comissões por empresa.
 
-## Executar localmente
+## Aplicação publicada
 
-Requer Python 3 e Node.js para as verificações:
+Interface estática em GitHub Pages. Login e senhas são gerenciados pelo Supabase Auth; dados e convites são acessados exclusivamente pela Edge Function `comissions-api`.
+
+- Convites por link individual de uso único, com validade de 24 horas. Nenhum e-mail é enviado pelo aplicativo.
+- Administrador gerencia usuários e acessos. Gestor edita empresas autorizadas. Colaborador consulta apenas suas próprias comissões.
+- Banco com RLS e acesso direto negado para `anon` e `authenticated`. A função autentica o usuário, consulta suas permissões atualizadas e filtra os dados no servidor.
+- Salvamento com controle de versão; edições concorrentes exigem recarregamento para não sobrescrever alterações.
+- A chave publicada no frontend é uma chave **publishable**; chaves administrativas são usadas apenas no servidor.
+- O site não importa automaticamente os cadastros antigos de localhost/localStorage. A migração deve ser planejada separadamente.
+
+## Estrutura
+
+- `dist/`: aplicação estática, autenticação e exportação PDF.
+- `backend/index.ts`: Edge Function (SDK com versão fixa).
+- `backend/schema.sql`: estrutura inicial, com dados genéricos. Aplicação exige provisionar o primeiro administrador por acesso seguro ao banco, fora do repositório.
+- `checks/`: testes de regras e autorização, sem criar usuários reais.
+
+## Verificação
+
+Requer Node.js 24:
 
 ```sh
-python3 -m http.server 8765 --directory dist
 node checks/sales.cjs
+node checks/access.cjs
 ```
 
-Abra http://localhost:8765.
-
-## Funcionalidades
-
-- Empresas, produtos e políticas independentes, com valores base editáveis.
-- Vendas com vários produtos e geração de recebíveis.
-- Comissões automáticas e extraordinárias; edição, exclusão reversível e histórico.
-- Recebimentos e pagamentos de comissão separados.
-- Filtros, ordenação por recebimento e exportação PDF no navegador.
-- Metas mensais editáveis e simulação de perfis e acessos.
-
-## Estado do protótipo
-
-Os dados ficam no localStorage do navegador (chave `comissions-v2`). A autenticação e as permissões são simulações da interface, não mecanismos de segurança. Não há servidor, banco compartilhado ou integração bancária. Não use esta versão para compartilhar dados financeiros reais com a equipe.
-
-Cadastros feitos em localhost não são transferidos ao domínio publicado. Não limpe os dados do navegador local sem fazer uma cópia deles. Cada navegador e domínio possui cadastros independentes.
-
-Nenhum cadastro do navegador, captura de tela, chave ou documento de referência é incluído no repositório. A primeira abertura apresenta apenas três empresas genéricas e um administrador de demonstração. Produtos, contratos, metas e comissões começam vazios; nomes, regras e valores comerciais da versão local foram removidos.
-
-## Publicação
-
-O workflow `Deploy Comissions to GitHub Pages` testa e publica a pasta `dist` após alterações na branch `main`. Em Settings → Pages, selecione **GitHub Actions** como origem. A configuração do workflow usa apenas as permissões de publicação do GitHub e não exige segredos do aplicativo.
-
-A próxima etapa para uso compartilhado é implementar autenticação real, banco de dados e autorização no servidor.
+O workflow publica somente `dist/`. Alterações no backend devem ser implantadas no Supabase antes do frontend correspondente. Não publique senhas, links de convite ou chaves administrativas.
