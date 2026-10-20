@@ -27,9 +27,14 @@ jobs:
           node --check dist/sales.js
           node --check dist/commission-pdf.js
           node --check dist/auth.js
+          node --check dist/portal.js
+          node --check dist/settings.js
           node checks/sales.cjs
           node checks/access.cjs
           node checks/users.cjs
+          node checks/foundation.cjs
+          node checks/portal-api.cjs
+          node checks/settings.cjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
