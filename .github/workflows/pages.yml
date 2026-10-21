@@ -25,6 +25,7 @@ jobs:
         run: |
           node --check dist/commission-schedule.js
           node --check dist/contract-terms.js
+          node --check dist/mobile.js
           node --check dist/app.js
           node --check dist/sales.js
           node --check dist/commission-pdf.js

@@ -36,3 +36,7 @@ O workflow publica somente `dist/`. Alterações no backend devem ser implantada
 Em Comissões → Calendário de pagamentos, administradores e gestores com acesso a Comissões configuram o dia padrão por empresa e exceções por competência. Recebimentos até o último dia de um mês são programados para o mês seguinte. Dias 29–31 usam o último dia nos meses mais curtos. Nenhum dia é presumido quando o calendário ainda não foi configurado.
 
 A baixa continua manual, individual ou em lote, feita pelo responsável e com data/meio reais. O servidor bloqueia pagamentos anteriores à programação e preserva a programação registrada em pagamentos anteriores. O portal de vendedores e colaboradores exibe todas as comissões próprias, incluindo previsões, programadas e pagas. Cobranças vencidas sem recebimento mostram “Em processamento · Aguardando pagamento do cliente”. O acesso continua limitado aos contratos e percentuais do próprio colaborador.
+
+## Interface mobile
+
+Em telas de até 900 px, a interface usa menu lateral recolhível e atalhos inferiores derivados das permissões existentes. As tabelas viram cartões com rótulos, mantendo os mesmos dados e ações, inclusive seleção e baixa em lote. Filtros avançados de comissões são expansíveis. Formulários ocupam a tela, com campos de 16 px, áreas de toque de 44 px e suporte às áreas seguras do aparelho. A apresentação desktop e as regras financeiras permanecem nas implementações existentes.
