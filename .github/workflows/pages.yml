@@ -23,6 +23,7 @@ jobs:
           node-version: '24'
       - name: Verify application
         run: |
+          node --check dist/contract-terms.js
           node --check dist/app.js
           node --check dist/sales.js
           node --check dist/commission-pdf.js
@@ -37,6 +38,7 @@ jobs:
           node checks/settings.cjs
           node checks/draft-save.cjs
           node checks/sale-flow.cjs
+          node checks/contract-terms.cjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
