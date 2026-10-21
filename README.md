@@ -30,3 +30,9 @@ node checks/access.cjs
 ```
 
 O workflow publica somente `dist/`. Alterações no backend devem ser implantadas no Supabase antes do frontend correspondente. Não publique senhas, links de convite ou chaves administrativas.
+
+## Calendário de comissões
+
+Em Comissões → Calendário de pagamentos, administradores e gestores com acesso a Comissões configuram o dia padrão por empresa e exceções por competência. Recebimentos até o último dia de um mês são programados para o mês seguinte. Dias 29–31 usam o último dia nos meses mais curtos. Nenhum dia é presumido quando o calendário ainda não foi configurado.
+
+A baixa continua manual, individual ou em lote, feita pelo responsável e com data/meio reais. O servidor bloqueia pagamentos anteriores à programação e preserva a programação registrada em pagamentos anteriores. O portal de vendedores e colaboradores recebe somente comissões efetivamente pagas, sem previsões ou lançamentos em aberto.
