@@ -40,3 +40,7 @@ A baixa continua manual, individual ou em lote, feita pelo responsável e com da
 ## Interface mobile
 
 Em telas de até 900 px, a interface usa menu lateral recolhível e atalhos inferiores derivados das permissões existentes. As tabelas viram cartões com rótulos, mantendo os mesmos dados e ações, inclusive seleção e baixa em lote. Filtros avançados de comissões são expansíveis. Formulários ocupam a tela, com campos de 16 px, áreas de toque de 44 px e suporte às áreas seguras do aparelho. A apresentação desktop e as regras financeiras permanecem nas implementações existentes.
+
+## Renovação de convites
+
+Em Usuários e acessos, usuários ativos sem acesso ativado mostram o botão Gerar novo convite. Somente o administrador pode renovar. O link vale por 24 horas, invalida convites pendentes anteriores e não altera empresas, cargo ou módulos. Copie o link exibido e envie diretamente à pessoa. O token não é salvo em texto puro no banco nem incluído nos registros de auditoria.

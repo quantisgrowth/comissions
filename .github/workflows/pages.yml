@@ -35,6 +35,7 @@ jobs:
           node checks/sales.cjs
           node checks/access.cjs
           node checks/users.cjs
+          node checks/invites.cjs
           node checks/foundation.cjs
           node checks/portal-api.cjs
           node checks/settings.cjs
