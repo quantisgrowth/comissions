@@ -39,6 +39,7 @@ jobs:
           node checks/draft-save.cjs
           node checks/sale-flow.cjs
           node checks/contract-terms.cjs
+          node checks/financial-parity.cjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
