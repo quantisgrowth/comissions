@@ -50,3 +50,5 @@
   .cards{grid-template-columns:repeat(4,minmax(0,1fr))}
   .commission-filter-bar{grid-template-columns:repeat(2,minmax(0,1fr))!important}
 }
+
+.password-control{display:flex;align-items:stretch;border:1px solid #dbe3dc;border-radius:6px;background:white;overflow:hidden}.password-control input{width:100%;min-width:0;border:0;border-radius:0}.password-control button{border:0;border-left:1px solid var(--line);padding:8px 12px;background:#edf5ef;color:var(--green);font-size:13px;min-height:44px;flex:none}.password-control:focus-within{outline:2px solid var(--green);outline-offset:2px}

@@ -7,6 +7,7 @@ create table public.cm_profiles (
 create table public.cm_invites (
  token_hash text primary key, profile_id uuid not null references public.cm_profiles(id),
  expires_at timestamptz not null, status text not null default 'pending' check(status in ('pending','processing','accepted','revoked')),
+ attempts integer not null default 0 check(attempts between 0 and 3),
  created_by uuid references public.cm_profiles(id), created_at timestamptz not null default now(),used_at timestamptz
 );
 create index cm_invites_profile on public.cm_invites(profile_id);

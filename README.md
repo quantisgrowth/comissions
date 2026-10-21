@@ -44,3 +44,5 @@ Em telas de até 900 px, a interface usa menu lateral recolhível e atalhos infe
 ## Renovação de convites
 
 Em Usuários e acessos, usuários ativos sem acesso ativado mostram o botão Gerar novo convite. Somente o administrador pode renovar. O link vale por 24 horas, invalida convites pendentes anteriores e não altera empresas, cargo ou módulos. Copie o link exibido e envie diretamente à pessoa. O token não é salvo em texto puro no banco nem incluído nos registros de auditoria.
+
+A ativação por convite oferece Mostrar/Ocultar nos campos de senha e confirmação. Cada convite admite três tentativas de definição de senha; divergências e senhas rejeitadas consomem uma tentativa. Erros de conexão não consomem tentativas. A terceira falha revoga o link; um novo convite começa com zero tentativas. O contador fica no servidor e não reinicia ao atualizar a página. Para bases anteriores, aplicar `backend/invite-attempts.sql` antes de implantar o backend.
