@@ -1,0 +1,358 @@
+// Commercial Teams and Product Commission Rules Controller
+// Manages commercial teams, member roles, authorized products, and custom commission rules.
+
+let teamsData = { teams: [], members: [], teamProducts: [], rules: [], loaded: false };
+let productsActiveTab = 'catalog'; // 'catalog' | 'teams'
+
+const commercialRoleLabels = {
+  closer: 'Vendedor (Closer)',
+  sdr: 'SDR (Pré-vendas)',
+  leader: 'Líder / Coordenador',
+  bdr: 'BDR (Outbound)',
+  account_manager: 'Gerente de Contas'
+};
+
+async function fetchTeams(force = false) {
+  if (teamsData.loaded && !force) return teamsData;
+  try {
+    const res = await api('teams-list');
+    teamsData = {
+      teams: res.teams || [],
+      members: res.members || [],
+      teamProducts: res.teamProducts || [],
+      rules: res.rules || [],
+      loaded: true
+    };
+  } catch (err) {
+    console.warn('Times comerciais não puderam ser carregados:', err.message);
+    teamsData = { teams: [], members: [], teamProducts: [], rules: [], loaded: false };
+  }
+  return teamsData;
+}
+
+function switchProductsTab(tab) {
+  productsActiveTab = tab;
+  render();
+}
+
+function getSellerTeams(companyId, sellerId) {
+  const myTeamIds = new Set(
+    teamsData.members
+      .filter(m => m.profile_id === sellerId && m.active)
+      .map(m => m.team_id)
+  );
+  return teamsData.teams.filter(t => 
+    t.active && 
+    myTeamIds.has(t.id) && 
+    (companyId === 'all' || t.company_id === companyId)
+  );
+}
+
+function getSellerAuthorizedProducts(companyId, sellerId) {
+  const allCompanyProducts = state.products.filter(p => !p.archived && (companyId === 'all' || p.company === companyId));
+  if (canManage()) return allCompanyProducts;
+
+  const sellerTeams = getSellerTeams(companyId, sellerId);
+  if (!sellerTeams.length) return allCompanyProducts; // Sem time definido: vê todos os da empresa
+
+  const teamIds = new Set(sellerTeams.map(t => t.id));
+  const assignedProductIds = new Set(
+    teamsData.teamProducts
+      .filter(tp => teamIds.has(tp.team_id))
+      .map(tp => tp.product_id)
+  );
+
+  // Se os times têm produtos atribuídos, restringe a eles
+  if (assignedProductIds.size > 0) {
+    return allCompanyProducts.filter(p => assignedProductIds.has(p.id));
+  }
+  return allCompanyProducts;
+}
+
+function getCustomProductRule(productId, sellerId, companyId) {
+  const sellerTeams = getSellerTeams(companyId, sellerId);
+  if (!sellerTeams.length) return null;
+
+  const teamIds = new Set(sellerTeams.map(t => t.id));
+  const myMemberships = teamsData.members.filter(m => m.profile_id === sellerId && m.active && teamIds.has(m.team_id));
+
+  for (const mem of myMemberships) {
+    const match = teamsData.rules.find(r => 
+      r.product_id === productId && 
+      r.team_id === mem.team_id && 
+      (r.role_target === mem.commercial_role || r.role_target === 'closer')
+    );
+    if (match) {
+      return {
+        first: Number(match.first_fee_percent || 0),
+        next: Number(match.next_fee_percent || 0),
+        setup: Number(match.setup_percent || 0),
+        months: Number(match.months || 6),
+        devFirst: 0,
+        devSetup: 0,
+        partner: 0
+      };
+    }
+  }
+  return null;
+}
+
+function renderTeamsTab() {
+  const filteredTeams = teamsData.teams.filter(t => t.active && (company === 'all' || t.company_id === company));
+  
+  return `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin: 18px 0 24px;">
+      <div>
+        <h2>Times Comerciais por Empresa e Produto</h2>
+        <p class="small">Cada time comercial pode ter vendedores específicos, catálogo restrito de produtos e regras de comissão exclusivas.</p>
+      </div>
+      ${btn('+ Novo time comercial', 'openTeamModal()')}
+    </div>
+
+    ${!filteredTeams.length ? empty('Nenhum time comercial cadastrado', 'Crie equipes comerciais para restringir produtos e personalizar percentuais de comissão.') : ''}
+
+    <div style="display:grid; gap:20px;">
+      ${filteredTeams.map(t => renderTeamCard(t)).join('')}
+    </div>
+  `;
+}
+
+function renderTeamCard(team) {
+  const teamMembers = teamsData.members.filter(m => m.team_id === team.id && m.active);
+  const teamProductIds = new Set(teamsData.teamProducts.filter(tp => tp.team_id === team.id).map(tp => tp.product_id));
+  const assignedProducts = state.products.filter(p => teamProductIds.has(p.id) && !p.archived);
+  const teamRules = teamsData.rules.filter(r => r.team_id === team.id);
+
+  return `
+    <section class="panel" style="border-left: 4px solid var(--green);">
+      <div class="panelhead">
+        <div>
+          <span class="pill">${esc(companyName(team.company_id))}</span>
+          <h2 style="margin:6px 0 2px 0;">${esc(team.name)}</h2>
+          <span class="small">${teamMembers.length} membro(s) · ${assignedProducts.length} produto(s) autorizados</span>
+        </div>
+        <div class="catalog-actions">
+          ${btn('Editar time', `openTeamModal('${team.id}')`, true)}
+        </div>
+      </div>
+
+      <!-- Membros do Time -->
+      <div style="margin: 16px 0;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <strong>Membros do Time</strong>
+          ${btn('+ Adicionar membro', `openTeamMemberModal('${team.id}')`, true)}
+        </div>
+        ${!teamMembers.length ? '<p class="small">Nenhum membro vinculado a este time comercial.</p>' : `
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            ${teamMembers.map(m => `
+              <div style="background:#eef4f0; border:1px solid var(--line); border-radius:6px; padding:6px 12px; font-size:12px; display:flex; align-items:center; gap:8px;">
+                <span><strong>${esc(userName(m.profile_id))}</strong> (${esc(commercialRoleLabels[m.commercial_role] || m.commercial_role)})</span>
+                <button type="button" style="border:0; background:none; cursor:pointer; color:var(--muted); font-size:14px;" title="Remover membro" onclick="removeTeamMember('${team.id}', '${m.profile_id}')">×</button>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      </div>
+
+      <!-- Produtos Autorizados -->
+      <div style="margin: 16px 0;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <strong>Produtos que este time pode vender</strong>
+          ${btn('⚙ Vincular produtos', `openTeamProductsModal('${team.id}', '${team.company_id}')`, true)}
+        </div>
+        ${!assignedProducts.length ? '<p class="small">Todos os produtos da empresa liberados (nenhuma restrição).</p>' : `
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            ${assignedProducts.map(p => `
+              <span class="pill" style="background:#e8f4ed; color:#247653;">
+                ${esc(p.name)} · ${esc(p.type)} (${money(p.baseMonthly || 0)})
+              </span>
+            `).join('')}
+          </div>
+        `}
+      </div>
+
+      <!-- Regras Específicas de Comissão -->
+      <div style="margin: 16px 0;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <strong>Regras de Comissão do Time</strong>
+          ${assignedProducts.length ? btn('+ Nova regra', `openTeamRuleModal('${team.id}', '${team.company_id}')`, true) : ''}
+        </div>
+        ${!teamRules.length ? '<p class="small">Usa a regra padrão de cada produto.</p>' : `
+          <table style="margin-top:8px;">
+            <thead>
+              <tr>
+                <th>Produto</th>
+                <th>Papel</th>
+                <th>1º Fee</th>
+                <th>Próximos Fees</th>
+                <th>Implementação</th>
+                <th>Duração</th>
+                <th>Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${teamRules.map(r => `
+                <tr>
+                  <td><strong>${esc(product(r.product_id)?.name || r.product_id)}</strong></td>
+                  <td>${esc(commercialRoleLabels[r.role_target] || r.role_target)}</td>
+                  <td>${r.first_fee_percent}%</td>
+                  <td>${r.next_fee_percent}%</td>
+                  <td>${r.setup_percent}%</td>
+                  <td>${r.months} meses</td>
+                  <td>${btn('Editar', `openTeamRuleModal('${team.id}', '${team.company_id}', '${r.id}')`, true)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+    </section>
+  `;
+}
+
+function openTeamModal(id = null) {
+  const t = teamsData.teams.find(x => x.id === id) || { name: '', company_id: company === 'all' ? allowed()[0]?.id : company, active: true };
+  show(`
+    <h2>${id ? 'Editar Time Comercial' : 'Novo Time Comercial'}</h2>
+    <p class="small">Times agrupam vendedores para direcionar produtos e regras de comissão.</p>
+    <form>
+      <div class="formgrid">
+        ${field('name', 'Nome do Time', t.name, 'text', 'required placeholder="Ex.: Time Outbound Enterprise"')}
+        ${select('company_id', 'Empresa', allowed().map(c => [c.id, c.name]), t.company_id)}
+      </div>
+      ${actions()}
+    </form>
+  `, async f => {
+    const payload = {
+      id,
+      name: f.get('name'),
+      company_id: f.get('company_id'),
+      active: true
+    };
+    await api('team-save', { team: payload });
+    await fetchTeams(true);
+    document.getElementById('modal').close();
+    render();
+    toast('Time comercial salvo com sucesso.');
+  });
+}
+
+function openTeamMemberModal(teamId) {
+  const team = teamsData.teams.find(t => t.id === teamId);
+  const existingMemberIds = new Set(teamsData.members.filter(m => m.team_id === teamId && m.active).map(m => m.profile_id));
+  const availableUsers = state.users.filter(u => u.active && !existingMemberIds.has(u.id) && (u.all || u.companies.includes(team.company_id)));
+
+  if (!availableUsers.length) {
+    return toast('Não há usuários ativos disponíveis nesta empresa para adicionar ao time.');
+  }
+
+  show(`
+    <h2>Adicionar Membro ao Time</h2>
+    <p class="small">Time: <strong>${esc(team?.name)}</strong></p>
+    <form>
+      <div class="formgrid">
+        ${select('profileId', 'Colaborador / Vendedor', availableUsers.map(u => [u.id, u.name + ' (' + u.role + ')']), availableUsers[0]?.id)}
+        ${select('role', 'Papel no Time Comercial', Object.entries(commercialRoleLabels).map(([k, v]) => [k, v]), 'closer')}
+      </div>
+      ${actions()}
+    </form>
+  `, async f => {
+    await api('team-member-add', {
+      teamId,
+      profileId: f.get('profileId'),
+      role: f.get('role')
+    });
+    await fetchTeams(true);
+    document.getElementById('modal').close();
+    render();
+    toast('Membro adicionado ao time comercial.');
+  });
+}
+
+async function removeTeamMember(teamId, profileId) {
+  try {
+    await api('team-member-remove', { teamId, profileId });
+    await fetchTeams(true);
+    render();
+    toast('Membro removido do time comercial.');
+  } catch (err) {
+    toast(err.message || 'Erro ao remover membro.');
+  }
+}
+
+function openTeamProductsModal(teamId, companyId) {
+  const team = teamsData.teams.find(t => t.id === teamId);
+  const companyProducts = state.products.filter(p => p.company === companyId && !p.archived);
+  const currentAssigned = new Set(teamsData.teamProducts.filter(tp => tp.team_id === teamId).map(tp => tp.product_id));
+
+  show(`
+    <h2>Produtos Autorizados para o Time</h2>
+    <p class="small">Time: <strong>${esc(team?.name)}</strong>. Marque os produtos que este time pode comercializar.</p>
+    <form>
+      <div class="checks" style="max-height:300px; overflow:auto; margin:16px 0;">
+        ${companyProducts.map(p => `
+          <label style="width:100%; display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" name="productIds" value="${esc(p.id)}" ${currentAssigned.has(p.id) ? 'checked' : ''}>
+            <span><strong>${esc(p.name)}</strong> · ${esc(p.type)} (${money(p.baseMonthly || 0)})</span>
+          </label>
+        `).join('')}
+      </div>
+      <p class="small">Se nenhum produto for marcado, o time poderá vender todos os produtos da empresa.</p>
+      ${actions()}
+    </form>
+  `, async f => {
+    const selectedIds = f.getAll('productIds');
+    await api('team-products-set', { teamId, productIds: selectedIds });
+    await fetchTeams(true);
+    document.getElementById('modal').close();
+    render();
+    toast('Catálogo do time comercial atualizado.');
+  });
+}
+
+function openTeamRuleModal(teamId, companyId, ruleId = null) {
+  const team = teamsData.teams.find(t => t.id === teamId);
+  const teamProductIds = new Set(teamsData.teamProducts.filter(tp => tp.team_id === teamId).map(tp => tp.product_id));
+  const availableProducts = state.products.filter(p => (!teamProductIds.size || teamProductIds.has(p.id)) && p.company === companyId && !p.archived);
+  const existingRule = teamsData.rules.find(r => r.id === ruleId) || {
+    product_id: availableProducts[0]?.id || '',
+    role_target: 'closer',
+    first_fee_percent: 10,
+    next_fee_percent: 5,
+    setup_percent: 10,
+    months: 6
+  };
+
+  show(`
+    <h2>${ruleId ? 'Editar Regra de Comissão' : 'Nova Regra de Comissão para o Time'}</h2>
+    <p class="small">Time: <strong>${esc(team?.name)}</strong></p>
+    <form>
+      <div class="formgrid">
+        ${select('product_id', 'Produto', availableProducts.map(p => [p.id, p.name]), existingRule.product_id)}
+        ${select('role_target', 'Cargo Comercial Alvo', Object.entries(commercialRoleLabels).map(([k, v]) => [k, v]), existingRule.role_target)}
+        ${field('first_fee_percent', '1º Fee (%)', existingRule.first_fee_percent, 'number', 'min="0" max="100" step="0.1" required')}
+        ${field('next_fee_percent', 'Próximos Fees (%)', existingRule.next_fee_percent, 'number', 'min="0" max="100" step="0.1" required')}
+        ${field('setup_percent', 'Implementação (%)', existingRule.setup_percent, 'number', 'min="0" max="100" step="0.1" required')}
+        ${field('months', 'Meses Comissionáveis', existingRule.months, 'number', 'min="1" max="120" step="1" required')}
+      </div>
+      ${actions()}
+    </form>
+  `, async f => {
+    const payload = {
+      id: ruleId,
+      team_id: teamId,
+      product_id: f.get('product_id'),
+      role_target: f.get('role_target'),
+      first_fee_percent: Number(f.get('first_fee_percent')),
+      next_fee_percent: Number(f.get('next_fee_percent')),
+      setup_percent: Number(f.get('setup_percent')),
+      months: Number(f.get('months'))
+    };
+    await api('commission-rule-save', { rule: payload });
+    await fetchTeams(true);
+    document.getElementById('modal').close();
+    render();
+    toast('Regra de comissão do time salva com sucesso.');
+  });
+}
+

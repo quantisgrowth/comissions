@@ -32,6 +32,8 @@ jobs:
           node --check dist/auth.js
           node --check dist/portal.js
           node --check dist/settings.js
+          node --check dist/teams.js
+          node --check dist/admin.js
           node checks/sales.cjs
           node checks/access.cjs
           node checks/users.cjs
@@ -45,6 +47,7 @@ jobs:
           node checks/contract-terms.cjs
           node checks/financial-parity.cjs
           node checks/commission-schedule.cjs
+          node checks/saas-tenants-teams.cjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

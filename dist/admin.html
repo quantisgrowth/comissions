@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Comissions SaaS • Painel SuperAdmin</title>
+  <style>
+    :root {
+      --navy: #0d1b2a;
+      --navy-light: #1b263b;
+      --accent: #00a86b;
+      --accent-hover: #008f5a;
+      --danger: #d90429;
+      --text: #e0e1dd;
+      --text-muted: #778da9;
+      --card-bg: #162032;
+      --border: #29384d;
+      --bg: #0b1320;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px system-ui, -apple-system, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      min-height: 100vh;
+    }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    
+    /* Header */
+    header {
+      background: var(--navy);
+      border-bottom: 1px solid var(--border);
+      padding: 18px 36px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .brand-admin {
+      font-size: 20px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: white;
+    }
+    .badge-superadmin {
+      background: #3a1c22;
+      color: #ff6b6b;
+      border: 1px solid #632a34;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 20px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .btn {
+      background: var(--accent);
+      color: white;
+      border: 0;
+      border-radius: 6px;
+      padding: 9px 16px;
+      font-weight: 500;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: var(--accent-hover); }
+    .btn-secondary {
+      background: var(--navy-light);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { background: #223049; }
+    .btn-danger {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid var(--danger);
+    }
+    .btn-danger:hover { background: var(--danger); color: white; }
+
+    /* Layout */
+    main {
+      max-width: 1300px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+    .page-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 28px;
+    }
+    h1 { margin: 0 0 6px 0; font-size: 26px; color: white; }
+    p.subtitle { margin: 0; color: var(--text-muted); font-size: 14px; }
+
+    /* Metrics Cards */
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .card label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .card .val {
+      font-size: 30px;
+      font-weight: 700;
+      color: white;
+    }
+
+    /* Table */
+    .panel {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th {
+      text-align: left;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    td {
+      padding: 14px;
+      border-bottom: 1px solid #1f2c3f;
+    }
+    tr:last-child td { border-bottom: 0; }
+    .status-pill {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .status-active { background: #0a3622; color: #4ade80; }
+    .status-inactive { background: #3c1618; color: #f87171; }
+    .plan-pill {
+      background: #1c2e4a;
+      color: #93c5fd;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+    .actions-cell {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    /* Modals & Dialogs */
+    dialog {
+      background: var(--card-bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      width: 540px;
+      max-width: 95vw;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+    }
+    dialog::backdrop { background: rgba(0,0,0,0.75); }
+    dialog h2 { margin-top: 0; color: white; }
+    .formgrid {
+      display: grid;
+      gap: 16px;
+      margin: 20px 0;
+    }
+    .field label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .field input, .field select {
+      width: 100%;
+      background: var(--navy);
+      border: 1px solid var(--border);
+      color: white;
+      padding: 10px 12px;
+      border-radius: 6px;
+    }
+    .field input:focus, .field select:focus {
+      outline: 2px solid var(--accent);
+      border-color: transparent;
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    /* Login Screen Specific */
+    .admin-auth-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .admin-auth-box {
+      width: 420px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 36px;
+      box-shadow: 0 15px 35px rgba(0,0,0,0.5);
+    }
+    .admin-auth-box h1 {
+      font-size: 22px;
+      margin-top: 14px;
+    }
+    .admin-auth-notice {
+      background: #1c2536;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+    .admin-auth-box .btn {
+      width: 100%;
+      margin-top: 10px;
+      padding: 12px;
+    }
+    .error-msg {
+      color: #ff6b6b;
+      font-size: 13px;
+      margin-top: 12px;
+    }
+    .portal-link {
+      display: block;
+      text-align: center;
+      margin-top: 20px;
+      font-size: 12px;
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .portal-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<div id="adminRoot"></div>
+
+<dialog id="adminModal"></dialog>
+
+<script src="admin.js"></script>
+</body>
+</html>
+
