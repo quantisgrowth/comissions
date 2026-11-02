@@ -85,13 +85,32 @@ create table if not exists public.cm_sales_commissions (
 
 create index if not exists cm_sales_commissions_demo_idx on public.cm_sales_commissions(demonstration_id);
 
--- 5. Configuração de RLS e Permissões Seguras
+-- 5. Tabela de Logs de Webhooks Recebidos (Auditoria e Monitoramento em tempo real)
+create table if not exists public.cm_webhook_logs (
+    id uuid primary key default gen_random_uuid(),
+    tenant_id uuid references public.cm_tenants(id) on delete cascade,
+    company_id text,
+    event text not null,
+    deal_id text,
+    status_code integer not null default 200,
+    status_text text not null default 'success',
+    payload jsonb not null,
+    response jsonb,
+    error_message text,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists cm_webhook_logs_created_idx on public.cm_webhook_logs(created_at desc);
+create index if not exists cm_webhook_logs_deal_idx on public.cm_webhook_logs(deal_id);
+
+-- 6. Configuração de RLS e Permissões Seguras
 alter table public.cm_leads enable row level security;
 alter table public.cm_demonstrations enable row level security;
 alter table public.cm_reschedule_logs enable row level security;
 alter table public.cm_sales_commissions enable row level security;
+alter table public.cm_webhook_logs enable row level security;
 
-grant select, insert, update, delete on public.cm_leads, public.cm_demonstrations, public.cm_reschedule_logs, public.cm_sales_commissions to authenticated, service_role;
+grant select, insert, update, delete on public.cm_leads, public.cm_demonstrations, public.cm_reschedule_logs, public.cm_sales_commissions, public.cm_webhook_logs to authenticated, service_role;
 
 -- Políticas de RLS
 drop policy if exists leads_auth on public.cm_leads;
@@ -106,4 +125,8 @@ create policy reschedule_auth on public.cm_reschedule_logs for all to authentica
 drop policy if exists sales_commissions_auth on public.cm_sales_commissions;
 create policy sales_commissions_auth on public.cm_sales_commissions for all to authenticated using (true) with check (true);
 
+drop policy if exists webhook_logs_auth on public.cm_webhook_logs;
+create policy webhook_logs_auth on public.cm_webhook_logs for all to authenticated using (true) with check (true);
+
 commit;
+

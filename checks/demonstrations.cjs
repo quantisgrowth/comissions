@@ -12,6 +12,7 @@ const { stripTypeScriptTypes } = require('node:module');
     demonstrations: [],
     reschedule_logs: [],
     sales_commissions: [],
+    webhook_logs: [],
     profiles: [
       { id: 'user-sdr', email: 'sdr@example.com', name: 'Lorena SDR' },
       { id: 'user-closer', email: 'closer@example.com', name: 'Carlos Closer' }
@@ -37,6 +38,8 @@ const { stripTypeScriptTypes } = require('node:module');
       },
       or: () => builder,
       order: () => builder,
+      limit: () => builder,
+      then: (resolve) => resolve({ data: currentData.filter(r => filters.every(f => f(r))), error: null }),
       single: async () => {
         isSingle = true;
         const res = currentData.filter(r => filters.every(f => f(r)));
@@ -248,6 +251,18 @@ const { stripTypeScriptTypes } = require('node:module');
   });
   assert.equal(payStatusUpdate.updated, true);
   assert.equal(mockDbData.sales_commissions[0].status_payment, 'pago');
+
+  // 9. Test Webhook Logs recording & listing
+  assert.equal(mockDbData.webhook_logs.length > 0, true);
+  const logsResult = await ctx.handleDemonstrations(mockDb, {
+    id: 'admin',
+    role: 'Administrador',
+    all_companies: true
+  }, {
+    action: 'webhook-logs-list'
+  });
+  assert.equal(Array.isArray(logsResult.logs), true);
+  assert.equal(logsResult.logs.length, mockDbData.webhook_logs.length);
 
   console.log('Verified CRM Webhook (scheduled, rescheduled, no_show, completed, deal_won, idempotency), Cycle Days SLA, and Platform Demonstrations management.');
 })().catch(e => {

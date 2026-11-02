@@ -228,24 +228,53 @@ export async function handleDemonstrations(db: any, p: any, input: any) {
     return { updated: true, commission: updated };
   }
 
+  // 7. Listagem de logs de webhook para a página de Automações
+  if (input.action === 'webhook-logs-list') {
+    if (!isManager) throw Error('Apenas administradores e gestores podem visualizar os logs de automação.');
+    const { data: logs, error: logsErr } = await db.from('cm_webhook_logs').select('*').order('created_at', { ascending: false }).limit(input.limit || 50);
+    if (logsErr) throw logsErr;
+    return { logs: logs || [] };
+  }
+
   throw Error('Ação de demonstrações inválida.');
 }
 
-// 6. Processador do Webhook CRM DataCrazy
+// 8. Processador do Webhook CRM DataCrazy
 export async function handleCrmWebhook(db: any, payload: any, secretHeader: string | null) {
   const EXPECTED_SECRET = Deno.env.get('CRM_WEBHOOK_SECRET') || 'quantis_crm_secret_2026';
+
+  const event = String(payload?.event || payload?.action || '').trim();
+  const data = payload?.data || payload || {};
+  const companyId = String(payload?.company_id || data?.company_id || 'quantis').trim();
+  const tenantId = String(payload?.tenant_id || data?.tenant_id || '00000000-0000-0000-0000-000000000001').trim();
+  const crmDealId = String(data?.deal_id || data?.id || data?.crm_deal_id || '').trim();
+
+  const recordLog = async (res: any) => {
+    try {
+      await db.from('cm_webhook_logs').insert({
+        tenant_id: tenantId,
+        company_id: companyId,
+        event: event || 'unknown',
+        deal_id: crmDealId || null,
+        status_code: res.status || (res.ok ? 200 : 400),
+        status_text: res.ok ? 'success' : 'error',
+        payload: payload,
+        response: res,
+        error_message: res.error || null,
+        created_at: new Date().toISOString()
+      });
+    } catch (e) {
+      console.error('Erro ao gravar cm_webhook_logs:', e);
+    }
+    return res;
+  };
+
   if (secretHeader && secretHeader !== EXPECTED_SECRET) {
-    return { ok: false, error: 'Chave de webhook inválida.', status: 401 };
+    return await recordLog({ ok: false, error: 'Chave de webhook inválida.', status: 401 });
   }
 
-  const event = String(payload.event || payload.action || '').trim();
-  const data = payload.data || payload;
-  const companyId = String(payload.company_id || data.company_id || 'quantis').trim();
-  const tenantId = String(payload.tenant_id || data.tenant_id || '00000000-0000-0000-0000-000000000001').trim();
-  const crmDealId = String(data.deal_id || data.id || data.crm_deal_id || '').trim();
-
   if (!crmDealId && !data.phone && !data.email) {
-    return { ok: false, error: 'Identificador do lead/deal ausente no payload.', status: 400 };
+    return await recordLog({ ok: false, error: 'Identificador do lead/deal ausente no payload.', status: 400 });
   }
 
   // 1. Localiza ou cria o lead
@@ -269,7 +298,7 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
       email: data.email ? String(data.email).toLowerCase() : null,
       segment: data.segment || null
     }).select().single();
-    if (leadErr) return { ok: false, error: leadErr.message, status: 500 };
+    if (leadErr) return await recordLog({ ok: false, error: leadErr.message, status: 500 });
     lead = newLead;
   }
 
@@ -298,7 +327,7 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
   // 4. Trata os eventos do DataCrazy
   if (event === 'demo_scheduled' || !existingDemo) {
     if (existingDemo) {
-      return { ok: true, message: 'Demonstração já cadastrada (idempotente).', demoId: existingDemo.id };
+      return await recordLog({ ok: true, message: 'Demonstração já cadastrada (idempotente).', demoId: existingDemo.id });
     }
 
     const { data: demo, error: demoErr } = await db.from('cm_demonstrations').insert({
@@ -317,8 +346,8 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
       deal_value_setup: Number(data.setup || data.deal_value_setup || 0)
     }).select().single();
 
-    if (demoErr) return { ok: false, error: demoErr.message, status: 500 };
-    return { ok: true, action: 'created', demoId: demo.id };
+    if (demoErr) return await recordLog({ ok: false, error: demoErr.message, status: 500 });
+    return await recordLog({ ok: true, action: 'created', demoId: demo.id });
   }
 
   if (event === 'demo_rescheduled') {
@@ -338,7 +367,7 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
       updated_at: new Date().toISOString()
     }).eq('id', existingDemo.id);
 
-    return { ok: true, action: 'rescheduled', demoId: existingDemo.id };
+    return await recordLog({ ok: true, action: 'rescheduled', demoId: existingDemo.id });
   }
 
   if (event === 'demo_no_show') {
@@ -347,7 +376,7 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
       is_completed: false,
       updated_at: new Date().toISOString()
     }).eq('id', existingDemo.id);
-    return { ok: true, action: 'no_show', demoId: existingDemo.id };
+    return await recordLog({ ok: true, action: 'no_show', demoId: existingDemo.id });
   }
 
   if (event === 'demo_completed') {
@@ -363,7 +392,7 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
       cycle_days: cycleDays,
       updated_at: new Date().toISOString()
     }).eq('id', existingDemo.id);
-    return { ok: true, action: 'completed', demoId: existingDemo.id };
+    return await recordLog({ ok: true, action: 'completed', demoId: existingDemo.id });
   }
 
   if (event === 'deal_won') {
@@ -394,7 +423,7 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
       status_payment: 'pendente'
     }, { onConflict: 'demonstration_id' });
 
-    return { ok: true, action: 'won', demoId: existingDemo.id };
+    return await recordLog({ ok: true, action: 'won', demoId: existingDemo.id });
   }
 
   if (event === 'deal_lost') {
@@ -403,8 +432,8 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
       loss_reason: data.reason || 'Perdido no CRM DataCrazy',
       updated_at: new Date().toISOString()
     }).eq('id', existingDemo.id);
-    return { ok: true, action: 'lost', demoId: existingDemo.id };
+    return await recordLog({ ok: true, action: 'lost', demoId: existingDemo.id });
   }
 
-  return { ok: true, message: 'Evento recebido sem ação necessária.' };
+  return await recordLog({ ok: true, message: 'Evento recebido sem ação necessária.' });
 }

@@ -391,9 +391,10 @@ function renderDemonstrationsModule() {
 
   // Sub-abas de navegação
   const subTabs = `
-    <div style="display:flex;gap:10px;margin-bottom:20px;">
+    <div style="display:flex;gap:10px;margin-bottom:20px;align-items:center;">
       ${btn('Demonstrações & Pipeline', `switchDemosSubTab('pipeline')`, demosSubTab !== 'pipeline')}
       ${btn('Painel de Comissões CRM', `switchDemosSubTab('commissions')`, demosSubTab !== 'commissions')}
+      ${isManager ? btn('⚡ Automações & Webhooks (DataCrazy) ↗', "go('Automações')", true) : ''}
     </div>
   `;
 
@@ -1027,3 +1028,4 @@ function openLossModal(demoId) {
     }
   });
 }
+
