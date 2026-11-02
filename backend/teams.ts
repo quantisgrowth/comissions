@@ -176,6 +176,15 @@ export async function handleTeams(db: any, p: any, input: any) {
     return { saved: true, rule: saved };
   }
 
+  if (input.action === 'commission-rule-delete') {
+    const { ruleId } = input;
+    if (!ruleId) throw Error('Regra inválida.');
+    const { error } = await db.from('cm_commission_rules').delete().eq('id', ruleId).eq('tenant_id', tenantId);
+    if (error) throw error;
+    await db.from('cm_audit').insert({ actor: p.id, action: 'commission-rule-delete' });
+    return { removed: true };
+  }
+
   throw Error('Ação de times inválida.');
 }
 

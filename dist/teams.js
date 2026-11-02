@@ -177,6 +177,19 @@ async function callTeamsApi(action, extra = {}) {
     }
   }
 
+  if (action === 'commission-rule-delete') {
+    const { ruleId } = extra;
+    const res = await fetch(CLOUD_URL + '/rest/v1/cm_commission_rules?id=eq.' + encodeURIComponent(ruleId), {
+      method: 'DELETE',
+      headers
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw Error(data.message || 'Erro ao remover regra de comissão.');
+    }
+    return { removed: true };
+  }
+
   throw Error('Ação inválida.');
 }
 
@@ -341,38 +354,65 @@ function renderTeamCard(team) {
 
       <!-- Regras Específicas de Comissão -->
       <div style="margin: 16px 0;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <strong>Regras de Comissão do Time</strong>
-          ${assignedProducts.length ? btn('+ Nova regra', `openTeamRuleModal('${team.id}', '${team.company_id}')`, true) : ''}
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; gap:16px;">
+          <div>
+            <strong>Regras de Comissão dos Produtos neste Time</strong>
+            <p class="small" style="margin:3px 0 0 0;">As regras cadastradas em cada produto são herdadas automaticamente. Você pode personalizar percentuais exclusivos para este time comercial quando necessário.</p>
+          </div>
+          ${(assignedProducts.length || state.products.some(p => p.company === team.company_id && !p.archived)) ? btn('+ Personalizar regra', `openTeamRuleModal('${team.id}', '${team.company_id}')`, true) : ''}
         </div>
-        ${!teamRules.length ? '<p class="small">Usa a regra padrão de cada produto.</p>' : `
-          <table style="margin-top:8px;">
-            <thead>
-              <tr>
-                <th>Produto</th>
-                <th>Papel</th>
-                <th>1º Fee</th>
-                <th>Próximos Fees</th>
-                <th>Implementação</th>
-                <th>Duração</th>
-                <th>Ação</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${teamRules.map(r => `
+        
+        <table style="margin-top:8px;">
+          <thead>
+            <tr>
+              <th>Produto</th>
+              <th>Origem da Regra</th>
+              <th>Papel</th>
+              <th>1º Fee</th>
+              <th>Próximos Fees</th>
+              <th>Implementação</th>
+              <th>Duração</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(assignedProducts.length ? assignedProducts : state.products.filter(p => p.company === team.company_id && !p.archived)).map(p => {
+              const customRule = teamRules.find(r => r.product_id === p.id);
+              const isCustom = !!customRule;
+              const r = isCustom ? customRule : {
+                first_fee_percent: p.rules?.first ?? 0,
+                next_fee_percent: p.rules?.next ?? 0,
+                setup_percent: p.rules?.setup ?? 0,
+                months: p.rules?.months ?? 6,
+                role_target: 'closer'
+              };
+              return `
                 <tr>
-                  <td><strong>${esc(product(r.product_id)?.name || r.product_id)}</strong></td>
-                  <td>${esc(commercialRoleLabels[r.role_target] || r.role_target)}</td>
-                  <td>${r.first_fee_percent}%</td>
+                  <td><strong>${esc(p.name)}</strong><div class="small">${esc(p.type)} · ${money(p.baseMonthly || 0)}</div></td>
+                  <td>
+                    ${isCustom 
+                      ? `<span class="pill" style="background:#e0f2fe; color:#0369a1; font-weight:600;">Exclusiva do time</span>` 
+                      : `<span class="pill" style="background:#f3f4f6; color:#4b5563;">Padrão do produto</span>`}
+                  </td>
+                  <td>${esc(commercialRoleLabels[r.role_target] || r.role_target || 'Vendedor (Closer)')}</td>
+                  <td><strong>${r.first_fee_percent}%</strong></td>
                   <td>${r.next_fee_percent}%</td>
                   <td>${r.setup_percent}%</td>
                   <td>${r.months} meses</td>
-                  <td>${btn('Editar', `openTeamRuleModal('${team.id}', '${team.company_id}', '${r.id}')`, true)}</td>
+                  <td>
+                    <div class="catalog-actions">
+                      ${isCustom 
+                        ? `${btn('Editar', `openTeamRuleModal('${team.id}', '${team.company_id}', '${customRule.id}')`, true)}
+                           ${btn('Restaurar padrão', `removeTeamRule('${customRule.id}')`, true)}`
+                        : btn('Personalizar', `openTeamRuleModal('${team.id}', '${team.company_id}', null, '${p.id}')`, true)
+                      }
+                    </div>
+                  </td>
                 </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        `}
+              `;
+            }).join('') || '<tr><td colspan="8" class="small">Nenhum produto cadastrado nesta empresa.</td></tr>'}
+          </tbody>
+        </table>
       </div>
     </section>
   `;
@@ -478,31 +518,40 @@ function openTeamProductsModal(teamId, companyId) {
   });
 }
 
-function openTeamRuleModal(teamId, companyId, ruleId = null) {
+function openTeamRuleModal(teamId, companyId, ruleId = null, targetProductId = null) {
   const team = teamsData.teams.find(t => t.id === teamId);
   const teamProductIds = new Set(teamsData.teamProducts.filter(tp => tp.team_id === teamId).map(tp => tp.product_id));
   const availableProducts = state.products.filter(p => (!teamProductIds.size || teamProductIds.has(p.id)) && p.company === companyId && !p.archived);
-  const existingRule = teamsData.rules.find(r => r.id === ruleId) || {
-    product_id: availableProducts[0]?.id || '',
+  
+  const existingRule = teamsData.rules.find(r => r.id === ruleId);
+  const defaultProdId = existingRule?.product_id || targetProductId || availableProducts[0]?.id || '';
+  const prod = product(defaultProdId);
+  const prodRules = prod?.rules || zeroRules;
+
+  const currentRule = existingRule || {
+    product_id: defaultProdId,
     role_target: 'closer',
-    first_fee_percent: 10,
-    next_fee_percent: 5,
-    setup_percent: 10,
-    months: 6
+    first_fee_percent: prodRules.first ?? 0,
+    next_fee_percent: prodRules.next ?? 0,
+    setup_percent: prodRules.setup ?? 0,
+    months: prodRules.months ?? 6
   };
 
   show(`
-    <h2>${ruleId ? 'Editar Regra de Comissão' : 'Nova Regra de Comissão para o Time'}</h2>
-    <p class="small">Time: <strong>${esc(team?.name)}</strong></p>
+    <h2>${ruleId ? 'Editar Regra Exclusiva do Time' : 'Personalizar Regra de Comissão do Time'}</h2>
+    <p class="small">Time: <strong>${esc(team?.name)}</strong>. Os campos vêm pré-preenchidos com a regra do produto selecionado.</p>
     <form>
       <div class="formgrid">
-        ${select('product_id', 'Produto', availableProducts.map(p => [p.id, p.name]), existingRule.product_id)}
-        ${select('role_target', 'Cargo Comercial Alvo', Object.entries(commercialRoleLabels).map(([k, v]) => [k, v]), existingRule.role_target)}
-        ${field('first_fee_percent', '1º Fee (%)', existingRule.first_fee_percent, 'number', 'min="0" max="100" step="0.1" required')}
-        ${field('next_fee_percent', 'Próximos Fees (%)', existingRule.next_fee_percent, 'number', 'min="0" max="100" step="0.1" required')}
-        ${field('setup_percent', 'Implementação (%)', existingRule.setup_percent, 'number', 'min="0" max="100" step="0.1" required')}
-        ${field('months', 'Meses Comissionáveis', existingRule.months, 'number', 'min="1" max="120" step="1" required')}
+        ${select('product_id', 'Produto', availableProducts.map(p => [p.id, p.name]), currentRule.product_id)}
+        ${select('role_target', 'Cargo Comercial Alvo', Object.entries(commercialRoleLabels).map(([k, v]) => [k, v]), currentRule.role_target)}
+        ${field('first_fee_percent', '1º Fee (%)', currentRule.first_fee_percent, 'number', 'min="0" max="100" step="0.1" required')}
+        ${field('next_fee_percent', 'Próximos Fees (%)', currentRule.next_fee_percent, 'number', 'min="0" max="100" step="0.1" required')}
+        ${field('setup_percent', 'Implementação (%)', currentRule.setup_percent, 'number', 'min="0" max="100" step="0.1" required')}
+        ${field('months', 'Meses Comissionáveis', currentRule.months, 'number', 'min="1" max="120" step="1" required')}
       </div>
+      <p class="small" id="ruleProductDefaultNotice" style="margin-top:12px; color:var(--muted);">
+        Regra padrão no cadastro do produto: 1º Fee ${prodRules.first ?? 0}%, Próximos ${prodRules.next ?? 0}%, Implementação ${prodRules.setup ?? 0}%, Duração ${prodRules.months ?? 6} meses.
+      </p>
       ${actions()}
     </form>
   `, async f => {
@@ -520,7 +569,36 @@ function openTeamRuleModal(teamId, companyId, ruleId = null) {
     await fetchTeams(true);
     document.getElementById('modal').close();
     render();
-    toast('Regra de comissão do time salva com sucesso.');
+    toast('Regra exclusiva do time salva com sucesso.');
   });
+
+  const prodSelect = document.getElementById('f_product_id');
+  if (prodSelect) {
+    prodSelect.onchange = (e) => {
+      const p = product(e.target.value);
+      if (!p || !p.rules) return;
+      const f1 = document.getElementById('f_first_fee_percent');
+      const fn = document.getElementById('f_next_fee_percent');
+      const fs = document.getElementById('f_setup_percent');
+      const fm = document.getElementById('f_months');
+      const notice = document.getElementById('ruleProductDefaultNotice');
+      if (f1) f1.value = p.rules.first ?? 0;
+      if (fn) fn.value = p.rules.next ?? 0;
+      if (fs) fs.value = p.rules.setup ?? 0;
+      if (fm) fm.value = p.rules.months ?? 6;
+      if (notice) notice.textContent = `Regra padrão no cadastro do produto: 1º Fee ${p.rules.first ?? 0}%, Próximos ${p.rules.next ?? 0}%, Implementação ${p.rules.setup ?? 0}%, Duração ${p.rules.months ?? 6} meses.`;
+    };
+  }
+}
+
+async function removeTeamRule(ruleId) {
+  try {
+    await callTeamsApi('commission-rule-delete', { ruleId });
+    await fetchTeams(true);
+    render();
+    toast('Regra personalizada removida. O time voltou a herdar o padrão do produto.');
+  } catch (err) {
+    toast(err.message || 'Erro ao remover regra.');
+  }
 }
 
