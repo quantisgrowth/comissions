@@ -325,7 +325,7 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
   const scheduledDate = data.scheduled_at || data.current_scheduled_date || new Date().toISOString();
 
   // 4. Trata os eventos do DataCrazy
-  if (event === 'demo_scheduled' || !existingDemo) {
+  if (event === 'demo_scheduled') {
     if (existingDemo) {
       return await recordLog({ ok: true, message: 'Demonstração já cadastrada (idempotente).', demoId: existingDemo.id });
     }
@@ -348,6 +348,27 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
 
     if (demoErr) return await recordLog({ ok: false, error: demoErr.message, status: 500 });
     return await recordLog({ ok: true, action: 'created', demoId: demo.id });
+  }
+
+  // Se não existir demonstração para os eventos seguintes, inicializa a base primeiro
+  if (!existingDemo) {
+    const { data: demo, error: demoErr } = await db.from('cm_demonstrations').insert({
+      tenant_id: tenantId,
+      company_id: companyId,
+      crm_deal_id: crmDealId || null,
+      lead_id: lead.id,
+      sdr_id: sdrId,
+      closer_id: closerId,
+      status: 'agendado',
+      is_completed: false,
+      first_scheduled_date: scheduledDate,
+      current_scheduled_date: scheduledDate,
+      reschedule_count: 0,
+      deal_value_mrr: Number(data.mrr || data.deal_value_mrr || 0),
+      deal_value_setup: Number(data.setup || data.deal_value_setup || 0)
+    }).select().single();
+    if (demoErr) return await recordLog({ ok: false, error: demoErr.message, status: 500 });
+    existingDemo = demo;
   }
 
   if (event === 'demo_rescheduled') {

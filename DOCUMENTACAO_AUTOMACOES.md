@@ -326,3 +326,4 @@ Para configurar os disparos no DataCrazy:
    `X-Webhook-Secret: quantis_crm_secret_2026`
 5. Configure o corpo da requisição (JSON) mapeando as variáveis dinâmicas do lead e da oportunidade.
 6. Realize um disparo de teste e confira o recebimento imediato na aba **Automações** do Comissions!
+

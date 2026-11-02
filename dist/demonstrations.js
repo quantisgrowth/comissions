@@ -300,10 +300,87 @@ async function callDemosApi(action, extra = {}) {
   throw Error('Ação de demonstrações não suportada.');
 }
 
+let demosRealtimeTimer = null;
+let lastKnownDemoIds = new Set();
+let lastKnownDemoTimestamps = new Map();
+
+function startDemosRealtimeSync() {
+  if (demosRealtimeTimer) return;
+  demosRealtimeTimer = setInterval(async () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    if (typeof cloudReady !== 'undefined' && !cloudReady) return;
+    if (typeof page !== 'undefined' && page !== 'Demonstrações' && page !== 'Visão geral') return;
+
+    try {
+      const res = await callDemosApi('demos-list', { companyId: typeof company !== 'undefined' ? company : 'all' });
+      if (!res || !Array.isArray(res.demos)) return;
+
+      const newDemos = res.demos;
+      let hasChanges = false;
+      let newLeadName = '';
+
+      if (lastKnownDemoIds.size > 0) {
+        for (const d of newDemos) {
+          if (!lastKnownDemoIds.has(d.id)) {
+            hasChanges = true;
+            const lead = (res.leads || []).find(l => l.id === d.lead_id);
+            newLeadName = lead?.company_name || lead?.contact_name || 'Novo agendamento CRM';
+            break;
+          } else if (lastKnownDemoTimestamps.get(d.id) !== d.updated_at) {
+            hasChanges = true;
+          }
+        }
+      }
+
+      lastKnownDemoIds = new Set(newDemos.map(d => d.id));
+      lastKnownDemoTimestamps = new Map(newDemos.map(d => [d.id, d.updated_at]));
+
+      if (hasChanges || !demosData.loaded) {
+        demosData = {
+          demos: res.demos || [],
+          leads: res.leads || [],
+          reschedules: res.reschedules || [],
+          commissions: res.commissions || [],
+          loaded: true
+        };
+
+        if (newLeadName && typeof toast === 'function') {
+          toast(`🔔 Nova demonstração do CRM: ${newLeadName}`);
+        }
+
+        const modal = typeof document !== 'undefined' ? document.getElementById('modal') : null;
+        if (!modal || !modal.open) {
+          if (typeof page !== 'undefined' && page === 'Demonstrações' && typeof render === 'function') {
+            render();
+          }
+        }
+      }
+    } catch (e) {
+      // background poll
+    }
+  }, 3500);
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', async () => {
+    if (!document.hidden && typeof cloudReady !== 'undefined' && cloudReady && typeof page !== 'undefined' && page === 'Demonstrações') {
+      await fetchDemos(true);
+      if (typeof render === 'function') render();
+    }
+  });
+  window.addEventListener('focus', async () => {
+    if (typeof cloudReady !== 'undefined' && cloudReady && typeof page !== 'undefined' && page === 'Demonstrações') {
+      await fetchDemos(true);
+      if (typeof render === 'function') render();
+    }
+  });
+}
+
 async function fetchDemos(force = false) {
   if (demosData.loaded && !force) return;
+  startDemosRealtimeSync();
   try {
-    const res = await callDemosApi('demos-list', { companyId: company });
+    const res = await callDemosApi('demos-list', { companyId: typeof company !== 'undefined' ? company : 'all' });
     if (res) {
       demosData = {
         demos: res.demos || [],
@@ -312,6 +389,8 @@ async function fetchDemos(force = false) {
         commissions: res.commissions || [],
         loaded: true
       };
+      lastKnownDemoIds = new Set((res.demos || []).map(d => d.id));
+      lastKnownDemoTimestamps = new Map((res.demos || []).map(d => [d.id, d.updated_at]));
     }
   } catch (err) {
     console.error('Erro ao carregar demonstrações:', err);
@@ -325,6 +404,7 @@ function switchDemosSubTab(tab) {
 
 // Renderizador principal da página de Demonstrações
 function renderDemonstrationsModule() {
+  startDemosRealtimeSync();
   if (!demosData.loaded) {
     fetchDemos(true).then(() => render());
     return title('Demonstrações comerciais', 'Ciclo de vendas de agendamento a fechamento.') +
@@ -336,8 +416,9 @@ function renderDemonstrationsModule() {
 
   // Filtra por empresa ativa no sidebar
   let demos = demosData.demos.filter(d => {
-    if (!canAccess(d.company_id)) return false;
-    if (company !== 'all' && d.company_id !== company) return false;
+    const hasCompanyAccess = !d.company_id || canAccess(d.company_id) || (u && u.all);
+    if (!hasCompanyAccess) return false;
+    if (company !== 'all' && d.company_id && d.company_id !== company) return false;
     // Se for vendedor, visualiza apenas demos onde é Closer ou SDR (a menos que seja gestor)
     if (!isManager && ['Vendedor', 'Colaborador'].includes(u.role)) {
       if (d.closer_id !== u.id && d.sdr_id !== u.id) return false;
@@ -391,10 +472,11 @@ function renderDemonstrationsModule() {
 
   // Sub-abas de navegação
   const subTabs = `
-    <div style="display:flex;gap:10px;margin-bottom:20px;align-items:center;">
+    <div style="display:flex;gap:10px;margin-bottom:20px;align-items:center;flex-wrap:wrap;">
       ${btn('Demonstrações & Pipeline', `switchDemosSubTab('pipeline')`, demosSubTab !== 'pipeline')}
       ${btn('Painel de Comissões CRM', `switchDemosSubTab('commissions')`, demosSubTab !== 'commissions')}
       ${isManager ? btn('⚡ Automações & Webhooks (DataCrazy) ↗', "go('Automações')", true) : ''}
+      <span class="live-indicator" style="margin-left:auto;"><span class="live-pulse-dot"></span> Tempo real ativo</span>
     </div>
   `;
 

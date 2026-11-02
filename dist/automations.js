@@ -135,13 +135,69 @@ async function callAutomationsApi(action, extra = {}) {
   return { logs: [] };
 }
 
+let automationsRealtimeTimer = null;
+let lastKnownLogIds = new Set();
+
+function startAutomationsRealtimeSync() {
+  if (automationsRealtimeTimer) return;
+  automationsRealtimeTimer = setInterval(async () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    if (typeof cloudReady !== 'undefined' && !cloudReady) return;
+    if (typeof page !== 'undefined' && page !== 'Automações') return;
+
+    try {
+      const res = await callAutomationsApi('webhook-logs-list');
+      if (!res || !Array.isArray(res.logs)) return;
+
+      const newLogs = res.logs;
+      let hasNewLogs = false;
+      let latestEvent = '';
+
+      if (lastKnownLogIds.size > 0) {
+        for (const l of newLogs) {
+          if (!lastKnownLogIds.has(l.id)) {
+            hasNewLogs = true;
+            latestEvent = l.event;
+            break;
+          }
+        }
+      }
+
+      lastKnownLogIds = new Set(newLogs.map(l => l.id));
+
+      if (hasNewLogs) {
+        automationsData.logs = newLogs;
+        automationsData.loaded = true;
+        if (typeof toast === 'function') {
+          toast(`⚡ Webhook CRM recebido: ${latestEvent}`);
+        }
+        const modal = typeof document !== 'undefined' ? document.getElementById('modal') : null;
+        if (!modal || !modal.open) {
+          if (typeof render === 'function') render();
+        }
+      }
+    } catch (e) {}
+  }, 3500);
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', async () => {
+    if (!document.hidden && typeof cloudReady !== 'undefined' && cloudReady && typeof page !== 'undefined' && page === 'Automações') {
+      await fetchAutomationsLogs(true);
+      if (typeof render === 'function') render();
+    }
+  });
+}
+
 async function fetchAutomationsLogs(force = false) {
   if (automationsData.loaded && !force) return;
+  startAutomationsRealtimeSync();
   automationsData.loading = true;
   try {
     const res = await callAutomationsApi('webhook-logs-list');
     automationsData.logs = res.logs || [];
     automationsData.loaded = true;
+    lastKnownLogIds = new Set((res.logs || []).map(l => l.id));
   } catch (err) {
     console.error('Erro ao buscar logs de webhook:', err);
   } finally {
@@ -345,7 +401,8 @@ function renderAutomationsModule() {
           <h2>Logs de Execuções e Webhooks Recebidos</h2>
           <p>Registro completo em tempo real das requisições enviadas ao Comissions.</p>
         </div>
-        <div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <span class="live-indicator"><span class="live-pulse-dot"></span> Tempo real ativo</span>
           ${btn('🔄 Atualizar logs', 'fetchAutomationsLogs(true).then(()=>render())', true)}
         </div>
       </div>
@@ -467,3 +524,4 @@ function openWebhookSimulatorModal(defaultEvent = 'demo_scheduled') {
     }
   });
 }
+

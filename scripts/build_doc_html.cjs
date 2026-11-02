@@ -611,3 +611,4 @@ const htmlContent = `<!DOCTYPE html>
 
 fs.writeFileSync('/tmp/documentacao_automacoes.html', htmlContent);
 console.log('HTML gerado com sucesso em /tmp/documentacao_automacoes.html');
+
