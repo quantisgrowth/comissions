@@ -42,6 +42,16 @@ async function adminApi(action, extra = {}) {
   return result;
 }
 
+function toggleAdminPassword(id, button) {
+  const input = document.getElementById(id);
+  if (!input) return;
+  const visible = input.type === 'password';
+  input.type = visible ? 'text' : 'password';
+  button.textContent = visible ? 'Ocultar' : 'Mostrar';
+  button.setAttribute('aria-pressed', String(visible));
+  button.setAttribute('aria-label', (visible ? 'Ocultar' : 'Mostrar') + ' senha');
+}
+
 function renderAdminLogin(error = '') {
   const root = document.getElementById('adminRoot');
   root.innerHTML = `
@@ -61,8 +71,14 @@ function renderAdminLogin(error = '') {
             <input id="admEmail" name="email" type="email" required autocomplete="username" placeholder="admin@quantisgrowth.com">
           </div>
           <div class="field" style="margin-bottom:16px;">
-            <label for="admPass">Senha</label>
-            <input id="admPass" name="password" type="password" required autocomplete="current-password" placeholder="••••••••••••">
+            <div class="field-header">
+              <label for="admPass" style="margin-bottom:0;">Senha</label>
+              <a href="#forgot" class="forgot-link" onclick="event.preventDefault(); renderAdminForgot();">Esqueci minha senha</a>
+            </div>
+            <div class="password-control">
+              <input id="admPass" name="password" type="password" required autocomplete="current-password" placeholder="••••••••••••">
+              <button type="button" aria-label="Mostrar senha" aria-pressed="false" onclick="toggleAdminPassword('admPass', this)">Mostrar</button>
+            </div>
           </div>
           ${error ? `<div class="error-msg" role="alert">${escapeHtml(error)}</div>` : ''}
           <button type="submit" class="btn" id="btnAdminSubmit">Entrar no Backoffice</button>
@@ -333,6 +349,151 @@ function showGeneratedInvite(res, tenantName) {
   `;
 }
 
+function renderAdminForgot(error = '') {
+  const root = document.getElementById('adminRoot');
+  root.innerHTML = `
+    <div class="admin-auth-container">
+      <div class="admin-auth-box">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-weight:750; font-size:20px; color:white;">Comissions ↗</span>
+          <span class="badge-superadmin">SuperAdmin</span>
+        </div>
+        <h1>Recuperar Senha</h1>
+        <p class="subtitle" style="margin-bottom:20px;">Informe o e-mail do administrador para receber o link de redefinição de senha.</p>
+        <form id="adminForgotForm">
+          <div class="field" style="margin-bottom:16px;">
+            <label for="admRecoverEmail">E-mail do Administrador</label>
+            <input id="admRecoverEmail" name="email" type="email" required autocomplete="email" placeholder="admin@quantisgrowth.com">
+          </div>
+          ${error ? `<div class="error-msg" role="alert">${escapeHtml(error)}</div>` : ''}
+          <button type="submit" class="btn" id="btnForgotSubmit">Enviar link de recuperação</button>
+          <button type="button" class="btn btn-secondary" style="width:100%; margin-top:8px;" onclick="renderAdminLogin()">Voltar ao login</button>
+        </form>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('adminForgotForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('btnForgotSubmit');
+    btn.disabled = true;
+    btn.textContent = 'Enviando link…';
+    const email = new FormData(e.target).get('email');
+    try {
+      const redirectUrl = window.location.origin + window.location.pathname;
+      const resp = await fetch(CLOUD_URL + '/auth/v1/recover', {
+        method: 'POST',
+        headers: { apikey: CLOUD_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, redirect_to: redirectUrl })
+      });
+      const res = await resp.json();
+      if (!resp.ok) throw Error(res.msg || res.message || res.error_description || 'Erro ao solicitar recuperação.');
+      
+      const root = document.getElementById('adminRoot');
+      root.innerHTML = `
+        <div class="admin-auth-container">
+          <div class="admin-auth-box">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-weight:750; font-size:20px; color:white;">Comissions ↗</span>
+              <span class="badge-superadmin">SuperAdmin</span>
+            </div>
+            <h1>Link Enviado!</h1>
+            <p class="subtitle" style="margin-bottom:16px;">Enviamos as instruções para <strong>${escapeHtml(email)}</strong>.</p>
+            <div class="admin-auth-notice">
+              Verifique sua caixa de entrada e a pasta de spam. Ao clicar no link do e-mail, você retornará para definir a nova senha de administrador.
+            </div>
+            <button class="btn" onclick="renderAdminLogin()">Voltar ao login</button>
+          </div>
+        </div>
+      `;
+    } catch (err) {
+      renderAdminForgot(err.message);
+    }
+  };
+}
+
+function renderAdminReset(accessToken, error = '') {
+  const root = document.getElementById('adminRoot');
+  root.innerHTML = `
+    <div class="admin-auth-container">
+      <div class="admin-auth-box">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-weight:750; font-size:20px; color:white;">Comissions ↗</span>
+          <span class="badge-superadmin">SuperAdmin</span>
+        </div>
+        <h1>Nova Senha SuperAdmin</h1>
+        <p class="subtitle" style="margin-bottom:20px;">Defina uma nova senha para o acesso à retaguarda (mínimo de 12 caracteres).</p>
+        <form id="adminResetForm">
+          <div class="field" style="margin-bottom:14px;">
+            <label for="admNewPass">Nova Senha</label>
+            <div class="password-control">
+              <input id="admNewPass" name="newPassword" type="password" required minlength="12" maxlength="128" autocomplete="new-password" placeholder="••••••••••••">
+              <button type="button" aria-label="Mostrar senha" aria-pressed="false" onclick="toggleAdminPassword('admNewPass', this)">Mostrar</button>
+            </div>
+          </div>
+          <div class="field" style="margin-bottom:16px;">
+            <label for="admConfirmPass">Confirme a Nova Senha</label>
+            <div class="password-control">
+              <input id="admConfirmPass" name="confirmPassword" type="password" required minlength="12" maxlength="128" autocomplete="new-password" placeholder="••••••••••••">
+              <button type="button" aria-label="Mostrar senha" aria-pressed="false" onclick="toggleAdminPassword('admConfirmPass', this)">Mostrar</button>
+            </div>
+          </div>
+          ${error ? `<div class="error-msg" role="alert">${escapeHtml(error)}</div>` : ''}
+          <button type="submit" class="btn" id="btnResetSubmit">Salvar Nova Senha</button>
+          <button type="button" class="btn btn-secondary" style="width:100%; margin-top:8px;" onclick="history.replaceState(null, '', location.pathname); renderAdminLogin();">Cancelar</button>
+        </form>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('adminResetForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('btnResetSubmit');
+    btn.disabled = true;
+    btn.textContent = 'Salvando senha…';
+    const f = new FormData(e.target);
+    const p1 = f.get('newPassword');
+    const p2 = f.get('confirmPassword');
+    if (!accessToken) {
+      return renderAdminReset(accessToken, 'Token de recuperação ausente ou expirado. Solicite um novo link.');
+    }
+    if (p1 !== p2) {
+      return renderAdminReset(accessToken, 'As senhas digitadas não coincidem.');
+    }
+    try {
+      const resp = await fetch(CLOUD_URL + '/auth/v1/user', {
+        method: 'PUT',
+        headers: {
+          apikey: CLOUD_KEY,
+          Authorization: 'Bearer ' + accessToken,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ password: p1 })
+      });
+      const res = await resp.json();
+      if (!resp.ok) throw Error(res.msg || res.message || res.error_description || 'Não foi possível redefinir a senha.');
+      
+      history.replaceState(null, '', location.pathname);
+      const root = document.getElementById('adminRoot');
+      root.innerHTML = `
+        <div class="admin-auth-container">
+          <div class="admin-auth-box">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-weight:750; font-size:20px; color:white;">Comissions ↗</span>
+              <span class="badge-superadmin">SuperAdmin</span>
+            </div>
+            <h1>Senha Atualizada!</h1>
+            <p class="subtitle" style="margin-bottom:20px;">Sua nova senha de administrador foi salva com sucesso.</p>
+            <button class="btn" onclick="renderAdminLogin()">Fazer Login Agora</button>
+          </div>
+        </div>
+      `;
+    } catch (err) {
+      renderAdminReset(accessToken, err.message);
+    }
+  };
+}
+
 function logoutAdmin() {
   localStorage.removeItem('comissions-superadmin-session');
   adminSession = null;
@@ -350,6 +511,12 @@ function escapeJs(s) {
 
 // Inicialização
 (async () => {
+  const hash = new URLSearchParams(location.hash.slice(1));
+  const search = new URLSearchParams(location.search);
+  if (hash.get('type') === 'recovery' || search.get('type') === 'recovery') {
+    const token = hash.get('access_token') || search.get('access_token');
+    return renderAdminReset(token);
+  }
   if (!adminSession) {
     return renderAdminLogin();
   }

@@ -216,7 +216,43 @@ async function testSuite() {
   assert.equal(sellerTeams.teams.length, 1);
   assert.equal(sellerTeams.teams[0].name, 'Time Outbound Enterprise');
 
-  console.log('Verified SuperAdmin provisioning, Tenant Owner invite, Commercial Teams, Team Products and Dynamic Commission Rules.');
+  // Verify Password Visibility and Reset Capabilities in Client & Admin
+  const authJs = fs.readFileSync('dist/auth.js', 'utf8');
+  assert(authJs.includes('Esqueci minha senha'), 'auth.js must include password reset link');
+  assert(authJs.includes("authScreen('forgot')"), 'auth.js must support forgot password view');
+  assert(authJs.includes("authScreen('reset'"), 'auth.js must support password reset view');
+  assert(authJs.includes("authRequest('recover'"), 'auth.js must trigger password recovery');
+
+  const adminJs = fs.readFileSync('dist/admin.js', 'utf8');
+  assert(adminJs.includes('Esqueci minha senha'), 'admin.js must include password reset link');
+  assert(adminJs.includes('renderAdminForgot'), 'admin.js must support forgot password view');
+  assert(adminJs.includes('renderAdminReset'), 'admin.js must support password reset view');
+  assert(adminJs.includes('toggleAdminPassword'), 'admin.js must support password visibility toggle');
+
+  // Test admin toggleAdminPassword execution
+  const adminUi = {
+    document: {
+      getElementById: (id) => ({ type: 'password' })
+    }
+  };
+  const mockInput = { type: 'password' };
+  const mockButton = { textContent: 'Mostrar', setAttribute(k, v) { this[k] = v; } };
+  const adminCtx = {
+    document: { getElementById: (id) => mockInput },
+    String: String
+  };
+  vm.createContext(adminCtx);
+  vm.runInContext(adminJs.slice(adminJs.indexOf('function toggleAdminPassword'), adminJs.indexOf('function renderAdminLogin')), adminCtx);
+  adminCtx.toggleAdminPassword('test', mockButton);
+  assert.equal(mockInput.type, 'text');
+  assert.equal(mockButton.textContent, 'Ocultar');
+  assert.equal(mockButton['aria-pressed'], 'true');
+  adminCtx.toggleAdminPassword('test', mockButton);
+  assert.equal(mockInput.type, 'password');
+  assert.equal(mockButton.textContent, 'Mostrar');
+  assert.equal(mockButton['aria-pressed'], 'false');
+
+  console.log('Verified SuperAdmin provisioning, Tenant Owner invite, Commercial Teams, Team Products, Dynamic Commission Rules and Password Reset/Visibility flows.');
 }
 
 testSuite().catch((err) => {
