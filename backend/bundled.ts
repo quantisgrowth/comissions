@@ -1165,6 +1165,18 @@ async function handleDemonstrations(db2, p, input) {
     await db2.from("cm_audit").insert({ actor: p.id, action: "demo-commission-status" });
     return { updated: true, commission: updated };
   }
+  if (input.action === "demo-assign") {
+    const { demoId, closerId, sdrId } = input;
+    if (!demoId) throw Error("Demonstra\xE7\xE3o n\xE3o informada.");
+    const { data: updated, error: updErr } = await db2.from("cm_demonstrations").update({
+      closer_id: closerId || null,
+      sdr_id: sdrId || null,
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+    }).eq("id", demoId).select().single();
+    if (updErr) throw updErr;
+    await db2.from("cm_audit").insert({ actor: p.id, action: "demo-assign" });
+    return { updated: true, demo: updated };
+  }
   if (input.action === "webhook-logs-list") {
     if (!isManager) throw Error("Apenas administradores e gestores podem visualizar os logs de automa\xE7\xE3o.");
     const { data: logs, error: logsErr } = await db2.from("cm_webhook_logs").select("*").order("created_at", { ascending: false }).limit(input.limit || 50);
@@ -1547,10 +1559,9 @@ async function issueInvite(target, actor) {
   return { url: site + "#invite=" + raw, expires, profile: viewProfile(target) };
 }
 Deno.serve(async (req) => {
-  const origin = req.headers.get("origin") || "", allowOrigin = origin && !origin.startsWith("null") ? origin : "https://quantisgrowth.github.io", headers = { "Access-Control-Allow-Origin": allowOrigin, "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-webhook-secret, x-client-info", "Access-Control-Allow-Methods": "POST, GET, OPTIONS", "Content-Type": "application/json", "Cache-Control": "no-store" };
+  const origin = req.headers.get("origin") || "", allowOrigin = origin && !origin.startsWith("null") ? origin : "https://quantisgrowth.github.io", headers = { "Access-Control-Allow-Origin": allowOrigin, "Access-Control-Allow-Headers": "authorization, apikey, content-type", "Access-Control-Allow-Methods": "POST, OPTIONS", "Content-Type": "application/json", "Cache-Control": "no-store" };
   const reply = (data, status = 200) => new Response(JSON.stringify(data), { status, headers });
   if (req.method === "OPTIONS") return new Response(null, { headers });
-  if (req.method === "GET") return reply({ ok: true, status: "online", service: "comissions-crm-webhook" });
   if (req.method !== "POST") return reply({ error: "M\xE9todo inv\xE1lido" }, 405);
   try {
     const input = await req.json();
@@ -1558,12 +1569,10 @@ Deno.serve(async (req) => {
       const result = await acceptInvite(db, input);
       return reply(result.body, result.status);
     }
-    const url = new URL(req.url);
-    const secret = req.headers.get("x-webhook-secret") || req.headers.get("x-token") || url.searchParams.get("secret") || input.secret || null;
-    const isWebhook = input.action === "crm-webhook" || Boolean(secret) || Boolean(input.event || input.event_type || input.data && (input.data.deal_id || input.data.id) || url.pathname.endsWith("/crm") || url.pathname.includes("webhook"));
-    if (isWebhook) {
+    if (input.action === "crm-webhook" || req.headers.get("x-webhook-secret")) {
+      const secret = req.headers.get("x-webhook-secret") || input.secret || null;
       const result = await handleCrmWebhook(db, input.payload || input, secret);
-      return reply(result, result.status || (result.ok ? 200 : 400));
+      return reply(result, result.status || 200);
     }
     const token = (req.headers.get("authorization") || "").replace(/^Bearer /, "");
     const { data: { user }, error: authError } = await db.auth.getUser(token);
@@ -1572,7 +1581,7 @@ Deno.serve(async (req) => {
     if (!p) return reply({ error: "Acesso n\xE3o autorizado." }, 403);
     if (input.action?.startsWith("admin-")) return reply(await handleAdmin(db, p, input, issueInvite));
     if (["teams-list", "team-save", "team-member-add", "team-member-remove", "team-products-set", "commission-rules-list", "commission-rule-save", "commission-rule-delete"].includes(input.action)) return reply(await handleTeams(db, p, input));
-    if (input.action === "demos-list" || input.action === "webhook-logs-list" || input.action?.startsWith("demo-")) return reply(await handleDemonstrations(db, p, input));
+    if (input.action === "demos-list" || input.action?.startsWith("demo-")) return reply(await handleDemonstrations(db, p, input));
     if (["settings-load", "settings-save", "photo-begin", "photo-finish", "job-save"].includes(input.action)) return reply(await handleSettings(db, p, input));
     const needsProfiles = ["load", "save", "profile", "invite", "seller-sale", "sale-review"].includes(input.action);
     const [stateResult, profilesResult] = await Promise.all([db.from("cm_state").select("*").eq("id", 1).single(), needsProfiles ? db.from("cm_profiles").select("*") : Promise.resolve({ data: [] })]);

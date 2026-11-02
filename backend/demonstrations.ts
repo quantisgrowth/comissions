@@ -228,7 +228,22 @@ export async function handleDemonstrations(db: any, p: any, input: any) {
     return { updated: true, commission: updated };
   }
 
-  // 7. Listagem de logs de webhook para a página de Automações
+  // 7. Transferência / Atribuição de Equipe (SDR / Closer)
+  if (input.action === 'demo-assign') {
+    const { demoId, closerId, sdrId } = input;
+    if (!demoId) throw Error('Demonstração não informada.');
+    const { data: updated, error: updErr } = await db.from('cm_demonstrations').update({
+      closer_id: closerId || null,
+      sdr_id: sdrId || null,
+      updated_at: new Date().toISOString()
+    }).eq('id', demoId).select().single();
+    if (updErr) throw updErr;
+
+    await db.from('cm_audit').insert({ actor: p.id, action: 'demo-assign' });
+    return { updated: true, demo: updated };
+  }
+
+  // 8. Listagem de logs de webhook para a página de Automações
   if (input.action === 'webhook-logs-list') {
     if (!isManager) throw Error('Apenas administradores e gestores podem visualizar os logs de automação.');
     const { data: logs, error: logsErr } = await db.from('cm_webhook_logs').select('*').order('created_at', { ascending: false }).limit(input.limit || 50);

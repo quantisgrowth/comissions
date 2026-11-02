@@ -37,7 +37,7 @@ function formatDemoDateTime(iso) {
   try {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return iso;
-    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' +
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' às ' +
            d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   } catch {
     return iso;
@@ -295,6 +295,22 @@ async function callDemosApi(action, extra = {}) {
     const data = await res.json();
     if (!res.ok) throw Error(data.message || 'Erro ao atualizar pagamento da comissão.');
     return { updated: true, commission: data[0] };
+  }
+
+  if (action === 'demo-assign') {
+    const { demoId, closerId, sdrId } = extra;
+    const res = await fetch(CLOUD_URL + '/rest/v1/cm_demonstrations?id=eq.' + encodeURIComponent(demoId), {
+      method: 'PATCH',
+      headers: { ...headers, Prefer: 'return=representation' },
+      body: JSON.stringify({
+        closer_id: closerId || null,
+        sdr_id: sdrId || null,
+        updated_at: new Date().toISOString()
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw Error(data.message || 'Erro ao transferir responsáveis.');
+    return { updated: true, demo: data[0] };
   }
 
   throw Error('Ação de demonstrações não suportada.');
@@ -608,25 +624,43 @@ function renderDemosTable(demos, leadsMap, commissionsMap) {
       <div class="small">Setup: ${money(d.deal_value_setup || 0)}</div>
     `;
 
-    // Datas: Original vs Atual
-    const origDate = formatDemoDateTime(d.first_scheduled_date);
-    const currDate = formatDemoDateTime(d.current_scheduled_date);
-    const datesHtml = `
-      <div style="font-weight:600;font-size:12px;">${currDate}</div>
-      ${resCount > 0 ? `<div class="small" style="color:var(--muted);">1º agendamento: ${origDate}</div>` : ''}
-      ${d.cycle_days !== null && d.cycle_days !== undefined ? `<div class="small" style="color:#047857;font-weight:600;">SLA: ${d.cycle_days} dia(s)</div>` : ''}
-    `;
+    // Datas: Original vs Atual vs Realização
+    const scheduledFormatted = formatDemoDateTime(d.current_scheduled_date);
+    const origFormatted = formatDemoDateTime(d.first_scheduled_date);
+    const completedFormatted = d.completed_date ? formatDemoDateTime(d.completed_date) : null;
+    const isFinished = isCompleted || ['realizado', 'fechado'].includes(d.status);
+
+    let datesHtml = '';
+    if (isFinished) {
+      datesHtml = `
+        <div style="font-size:12px;"><span style="color:var(--muted);font-size:10px;text-transform:uppercase;display:block;">Agendamento</span><strong>${scheduledFormatted}</strong></div>
+        <div style="font-size:12px;margin-top:3px;color:#15803d;"><span style="color:#15803d;font-size:10px;text-transform:uppercase;display:block;">✓ Realizada em</span><strong>${completedFormatted || scheduledFormatted}</strong></div>
+        ${d.cycle_days !== null && d.cycle_days !== undefined ? `<div class="small" style="color:#047857;font-weight:600;margin-top:2px;">Ciclo: ${d.cycle_days} dia(s)</div>` : ''}
+      `;
+    } else {
+      datesHtml = `
+        <div style="font-size:12px;"><span style="color:var(--muted);font-size:10px;text-transform:uppercase;display:block;">Data & Horário</span><strong style="color:var(--navy);font-size:13px;">📅 ${scheduledFormatted}</strong></div>
+        ${resCount > 0 ? `<div class="small" style="color:var(--muted);margin-top:3px;">1º agendamento: ${origFormatted}</div>` : ''}
+      `;
+    }
 
     // Contato
+    const rawPhone = String(lead.phone || '').trim();
+    const cleanPhone = rawPhone.replace(/\D/g, '');
+    const waLink = cleanPhone ? (cleanPhone.startsWith('55') ? `https://wa.me/${cleanPhone}` : `https://wa.me/55${cleanPhone}`) : null;
     const contactHtml = `
       <div style="font-weight:600;">${esc(lead.contact_name || 'Sem nome')}</div>
-      ${lead.phone ? `<div class="small"><a href="tel:${esc(lead.phone)}" style="color:var(--green);">${esc(lead.phone)}</a></div>` : ''}
-      ${lead.email ? `<div class="small">${esc(lead.email)}</div>` : ''}
+      ${rawPhone ? `<div class="small">${waLink ? `<a href="${waLink}" target="_blank" rel="noopener" style="color:#15803d;font-weight:600;text-decoration:none;" title="Conversar no WhatsApp">💬 ${esc(rawPhone)}</a>` : esc(rawPhone)}</div>` : ''}
+      ${lead.email ? `<div class="small"><a href="mailto:${esc(lead.email)}" style="color:var(--green);">${esc(lead.email)}</a></div>` : ''}
     `;
 
     // Lead / Empresa
     const leadHtml = `
-      <div><strong>${esc(lead.company_name || 'Lead sem nome')}</strong></div>
+      <div>
+        <a href="#" onclick="openLead360Modal('${esc(d.id)}');return false;" style="color:var(--navy);font-weight:700;font-size:13px;text-decoration:none;" title="Clique para abrir detalhes da oportunidade">
+          ${esc(lead.company_name || 'Lead sem nome')} <span style="color:var(--green);font-size:11px;">↗</span>
+        </a>
+      </div>
       <div class="small">${esc(companyName(d.company_id))} · ${esc(lead.segment || 'Geral')}</div>
       ${d.crm_deal_id ? `<div class="small" style="color:#6b7280;">CRM #${esc(d.crm_deal_id)}</div>` : ''}
     `;
@@ -637,24 +671,27 @@ function renderDemosTable(demos, leadsMap, commissionsMap) {
       <div class="small"><strong>SDR:</strong> ${esc(sdr?.name || 'Não atribuído')}</div>
     `;
 
-    // Ações
+    // Ações com Ícones elegantes e tooltips
     const actionButtons = `
-      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-        <button type="button" class="btn secondary" onclick="openRescheduleModal('${esc(d.id)}')" style="padding:5px 8px;font-size:11px;">
-          Reagendar
+      <div style="display:flex;gap:5px;align-items:center;">
+        <button type="button" class="btn secondary" onclick="openLead360Modal('${esc(d.id)}')" style="padding:6px 9px;font-size:13px;border-radius:6px;" title="Ver detalhes completos da oportunidade (Ficha 360°)">
+          👁️
+        </button>
+        <button type="button" class="btn secondary" onclick="openRescheduleModal('${esc(d.id)}')" style="padding:6px 9px;font-size:13px;border-radius:6px;" title="Reagendar Demonstração">
+          🗓️
         </button>
         ${d.status !== 'fechado' ? `
-          <button type="button" class="btn" onclick="openCloseSaleModal('${esc(d.id)}')" style="padding:5px 8px;font-size:11px;background:#047857;">
-            Fechar venda
+          <button type="button" class="btn" onclick="openCloseSaleModal('${esc(d.id)}')" style="background:#16a34a;color:white;padding:6px 9px;font-size:13px;border-radius:6px;" title="Fechar Venda (Ganho) 👍">
+            👍
           </button>
         ` : ''}
         ${d.status !== 'perdido' && d.status !== 'fechado' ? `
-          <button type="button" class="btn secondary" onclick="openLossModal('${esc(d.id)}')" style="padding:5px 8px;font-size:11px;color:#b91c1c;">
-            Perdido
+          <button type="button" class="btn secondary" onclick="openLossModal('${esc(d.id)}')" style="color:#dc2626;background:#fef2f2;border-color:#fca5a5;padding:6px 9px;font-size:13px;border-radius:6px;" title="Marcar como Perdido 👎">
+            👎
           </button>
         ` : ''}
-        <button type="button" class="btn secondary" onclick="openManualDemoModal('${esc(d.id)}')" style="padding:5px 8px;font-size:11px;" title="Editar dados">
-          Editar
+        <button type="button" class="btn secondary" onclick="openManualDemoModal('${esc(d.id)}')" style="padding:6px 9px;font-size:13px;border-radius:6px;" title="Editar Dados Manuais">
+          ✏️
         </button>
       </div>
     `;
@@ -1005,7 +1042,230 @@ function openRescheduleHistoryModal(demoId) {
   `, () => {});
 }
 
-// Modal: Fechar Venda & Calcular Comissões SDR / Closer
+// Modal: Ficha 360° da Oportunidade e do Lead
+function openLead360Modal(demoId) {
+  const demo = demosData.demos.find(d => d.id === demoId);
+  if (!demo) return toast('Demonstração não encontrada.');
+  const lead = demosData.leads.find(l => l.id === demo.lead_id) || {};
+  const sdr = state.users.find(u => u.id === demo.sdr_id);
+  const closer = state.users.find(u => u.id === demo.closer_id);
+  const statusCfg = demoStatusLabels[demo.status] || { label: demo.status, color: '#374151', bg: '#f3f4f6' };
+
+  const rawPhone = String(lead.phone || '').trim();
+  const cleanPhone = rawPhone.replace(/\D/g, '');
+  const waLink = cleanPhone ? (cleanPhone.startsWith('55') ? `https://wa.me/${cleanPhone}` : `https://wa.me/55${cleanPhone}`) : null;
+
+  const usersList = state.users.filter(u => u.active);
+  const sdrOptions = usersList.map(u => `<option value="${esc(u.id)}" ${demo.sdr_id === u.id ? 'selected' : ''}>${esc(u.name)} (${esc(u.role)})</option>`).join('');
+  const closerOptions = usersList.map(u => `<option value="${esc(u.id)}" ${demo.closer_id === u.id ? 'selected' : ''}>${esc(u.name)} (${esc(u.role)})</option>`).join('');
+
+  // Histórico de remarcações desta demo
+  const reschedules = (demosData.reschedules || []).filter(r => r.demonstration_id === demoId);
+
+  const resHtml = reschedules.length ? `
+    <div style="display:flex;flex-direction:column;gap:8px;max-height:180px;overflow-y:auto;margin-top:8px;">
+      ${reschedules.map((r, idx) => `
+        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px 12px;font-size:12px;">
+          <div style="display:flex;justify-content:space-between;color:#b45309;font-weight:600;margin-bottom:3px;">
+            <span>Remarcação #${reschedules.length - idx}</span>
+            <span class="small">${formatDemoDateTime(r.created_at)}</span>
+          </div>
+          <div>De: <strong>${formatDemoDateTime(r.previous_date)}</strong> ➔ Para: <strong>${formatDemoDateTime(r.new_date)}</strong></div>
+          ${r.reason ? `<div style="margin-top:4px;color:#4b5563;"><em>"${esc(r.reason)}"</em></div>` : ''}
+        </div>
+      `).join('')}
+    </div>
+  ` : `<p class="small" style="color:var(--muted);margin-top:4px;">Nenhuma remarcação registrada. Data permanece a original.</p>`;
+
+  const commission = demosData.commissions.find(c => c.demonstration_id === demoId);
+
+  show(`
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;gap:12px;">
+      <div>
+        <span class="eyebrow">${esc(companyName(demo.company_id))}</span>
+        <h2 style="font-size:22px;margin:3px 0 6px;">${esc(lead.company_name || 'Lead sem nome')}</h2>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <span style="display:inline-block;padding:3px 8px;border-radius:5px;font-size:11px;font-weight:600;color:${statusCfg.color};background:${statusCfg.bg};">${statusCfg.label}</span>
+          <span style="font-size:11px;color:var(--muted);">${demo.is_completed ? '✓ Comparecimento confirmado' : '✗ Aguardando comparecimento'}</span>
+          ${demo.crm_deal_id ? `<span style="font-size:11px;color:#6b7280;background:#f3f4f6;padding:2px 6px;border-radius:4px;">Deal CRM #${esc(demo.crm_deal_id)}</span>` : ''}
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:18px 0;">
+      <!-- Bloco 1: Contato e Lead -->
+      <section style="background:#fcfdfc;border:1px solid #e2e8e3;border-radius:8px;padding:16px;">
+        <h3 style="font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 10px;">Contato do Lead</h3>
+        <p style="margin:4px 0;font-size:14px;font-weight:600;">👤 ${esc(lead.contact_name || 'Não informado')}</p>
+        <p style="margin:4px 0;font-size:12px;color:var(--muted);">Segmento: <strong>${esc(lead.segment || 'Geral')}</strong></p>
+        <div style="margin:10px 0 6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          ${waLink ? `<a href="${waLink}" target="_blank" rel="noopener" class="btn" style="background:#15803d;padding:6px 12px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;">💬 WhatsApp ↗</a>` : ''}
+          ${rawPhone ? `<a href="tel:${esc(cleanPhone)}" class="btn secondary" style="padding:6px 12px;font-size:12px;text-decoration:none;">📞 ${esc(rawPhone)}</a>` : ''}
+        </div>
+        ${lead.email ? `<p style="margin:8px 0 0;font-size:12px;">✉️ <a href="mailto:${esc(lead.email)}" style="color:var(--green);">${esc(lead.email)}</a></p>` : ''}
+      </section>
+
+      <!-- Bloco 2: Equipe e Transferência -->
+      <section style="background:#fcfdfc;border:1px solid #e2e8e3;border-radius:8px;padding:16px;">
+        <h3 style="font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 10px;">Equipe Responsável</h3>
+        <form id="assignTeamForm" onsubmit="saveLeadAssignment(event, '${esc(demo.id)}')">
+          <div class="field" style="margin-bottom:10px;">
+            <label style="font-size:11px;">Closer (Vendedor Responsável)</label>
+            <select id="f_assignCloser" style="width:100%;font-size:12px;padding:6px;">
+              <option value="">Não atribuído</option>
+              ${closerOptions}
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:12px;">
+            <label style="font-size:11px;">SDR (Pré-vendas)</label>
+            <select id="f_assignSdr" style="width:100%;font-size:12px;padding:6px;">
+              <option value="">Não atribuído</option>
+              ${sdrOptions}
+            </select>
+          </div>
+          <button type="submit" class="btn secondary" style="padding:6px 12px;font-size:11px;width:100%;">
+            Salvar atribuição de equipe
+          </button>
+        </form>
+      </section>
+    </div>
+
+    <!-- Bloco 3: Agendamentos e Histórico -->
+    <section style="background:#fcfdfc;border:1px solid #e2e8e3;border-radius:8px;padding:16px;margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h3 style="font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0;">Ciclo de Agendamento</h3>
+        <span class="small" style="font-weight:600;">Remarcações: ${demo.reschedule_count || 0}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:12px;margin:12px 0;">
+        <div style="background:white;border:1px solid #e5e7eb;padding:10px;border-radius:6px;">
+          <div class="small" style="color:var(--muted);">1º Agendamento</div>
+          <div style="font-weight:600;font-size:12px;">${formatDemoDateTime(demo.first_scheduled_date)}</div>
+        </div>
+        <div style="background:white;border:1px solid #e5e7eb;padding:10px;border-radius:6px;">
+          <div class="small" style="color:var(--muted);">Data Agendada Atual</div>
+          <div style="font-weight:600;font-size:12px;color:var(--navy);">${formatDemoDateTime(demo.current_scheduled_date)}</div>
+        </div>
+        <div style="background:white;border:1px solid #e5e7eb;padding:10px;border-radius:6px;">
+          <div class="small" style="color:var(--muted);">Data Realizada (SLA)</div>
+          <div style="font-weight:600;font-size:12px;color:${demo.completed_date ? '#15803d' : 'var(--muted)'};">
+            ${demo.completed_date ? `${formatDemoDateTime(demo.completed_date)} (${demo.cycle_days || 0}d)` : 'Ainda não realizada'}
+          </div>
+        </div>
+      </div>
+      <details style="font-size:12px;margin-top:8px;">
+        <summary style="cursor:pointer;color:var(--green);font-weight:600;">Ver histórico detalhado de remarcações (${reschedules.length})</summary>
+        ${resHtml}
+      </details>
+    </section>
+
+    <!-- Bloco 4: Valores e Proposta -->
+    <section style="background:#fcfdfc;border:1px solid #e2e8e3;border-radius:8px;padding:16px;margin-bottom:16px;">
+      <h3 style="font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 10px;">Valores & Proposta</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="background:white;border:1px solid #e5e7eb;padding:10px;border-radius:6px;">
+          <div class="small" style="color:var(--muted);">Mensalidade / MRR</div>
+          <div style="font-weight:700;font-size:16px;">${money(demo.deal_value_mrr || 0)}</div>
+        </div>
+        <div style="background:white;border:1px solid #e5e7eb;padding:10px;border-radius:6px;">
+          <div class="small" style="color:var(--muted);">Implementação / Setup</div>
+          <div style="font-weight:700;font-size:16px;">${money(demo.deal_value_setup || 0)}</div>
+        </div>
+      </div>
+      ${commission ? `
+        <div class="notice" style="margin:12px 0 0;">
+          <strong>Venda Fechada & Comissão Apurada:</strong><br>
+          Closer: ${money(commission.closer_commission_amount || 0)} · SDR: ${money(commission.sdr_commission_amount || 0)} · Status pagamento: <strong>${commission.status_payment || 'pendente'}</strong>
+        </div>
+      ` : ''}
+    </section>
+
+    <!-- Rodapé de Ações Rápidas -->
+    <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);padding-top:16px;margin-top:16px;flex-wrap:wrap;gap:8px;">
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button type="button" class="btn secondary" onclick="document.getElementById('modal').close();openRescheduleModal('${esc(demo.id)}')">
+          🗓️ Reagendar
+        </button>
+        ${demo.status !== 'fechado' ? `
+          <button type="button" class="btn" onclick="document.getElementById('modal').close();openCloseSaleModal('${esc(demo.id)}')" style="background:#16a34a;">
+            👍 Fechar Venda (Ganho)
+          </button>
+        ` : ''}
+        ${demo.status !== 'perdido' && demo.status !== 'fechado' ? `
+          <button type="button" class="btn secondary" onclick="document.getElementById('modal').close();openLossModal('${esc(demo.id)}')" style="color:#dc2626;border-color:#fca5a5;">
+            👎 Perdido
+          </button>
+        ` : ''}
+      </div>
+      <button type="button" class="btn secondary" onclick="document.getElementById('modal').close()">
+        Fechar
+      </button>
+    </div>
+  `);
+}
+
+async function saveLeadAssignment(e, demoId) {
+  e.preventDefault();
+  const closerId = document.getElementById('f_assignCloser').value || null;
+  const sdrId = document.getElementById('f_assignSdr').value || null;
+
+  try {
+    await callDemosApi('demo-assign', { demoId, closerId, sdrId });
+    toast('Equipe comercial da oportunidade atualizada com sucesso!');
+    await fetchDemos(true);
+    openLead360Modal(demoId);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+// Recalcular comissões com base nas regras do time e produto selecionado
+function recalculateCloseSaleCommissions(demoId) {
+  const demo = demosData.demos.find(d => d.id === demoId);
+  const prodId = document.getElementById('f_closeProduct')?.value;
+  const prod = state.products.find(p => p.id === prodId);
+  const mrr = Number(document.getElementById('f_closeMrr')?.value || 0);
+  const setup = Number(document.getElementById('f_closeSetup')?.value || 0);
+
+  let closerFirstPct = 30;
+  let closerSetupPct = 20;
+  let sdrPct = 10;
+  let ruleSource = 'Regra comercial padrão';
+
+  if (prod) {
+    // 1. Tenta buscar regra no time comercial
+    const teamRuleCloser = (teamsData?.rules || []).find(r => r.product_id === prod.id && r.role_target === 'closer');
+    const teamRuleSdr = (teamsData?.rules || []).find(r => r.product_id === prod.id && r.role_target === 'sdr');
+
+    if (teamRuleCloser) {
+      closerFirstPct = Number(teamRuleCloser.first_fee_percent || 0);
+      closerSetupPct = Number(teamRuleCloser.setup_percent || 0);
+      ruleSource = 'Regras da Equipe Comercial';
+    } else if (prod.rules) {
+      closerFirstPct = Number(prod.rules.first || 0);
+      closerSetupPct = Number(prod.rules.setup || 0);
+      ruleSource = 'Regras do Catálogo do Produto';
+    }
+
+    if (teamRuleSdr) {
+      sdrPct = Number(teamRuleSdr.first_fee_percent || 0);
+    }
+  }
+
+  const sdrComm = Math.round(mrr * (sdrPct / 100) * 100) / 100;
+  const closerComm = Math.round(((mrr * (closerFirstPct / 100)) + (setup * (closerSetupPct / 100))) * 100) / 100;
+
+  const sdrEl = document.getElementById('f_closeSdrCommission');
+  const closerEl = document.getElementById('f_closeCloserCommission');
+  const hintEl = document.getElementById('closeCommissionHint');
+
+  if (sdrEl && !sdrEl.dataset.userEdited) sdrEl.value = sdrComm;
+  if (closerEl && !closerEl.dataset.userEdited) closerEl.value = closerComm;
+  if (hintEl) {
+    hintEl.innerHTML = `💡 <em>${ruleSource}:</em> Closer (${closerFirstPct}% 1º fee + ${closerSetupPct}% setup) = <strong>${money(closerComm)}</strong> | SDR (${sdrPct}%) = <strong>${money(sdrComm)}</strong>`;
+  }
+}
+
+// Modal: Fechar Venda (Ganho 👍) com Cálculo de Regras & Geração de Contrato 1-Click
 function openCloseSaleModal(demoId) {
   const demo = demosData.demos.find(d => d.id === demoId);
   if (!demo) return toast('Demonstração não encontrada.');
@@ -1013,30 +1273,104 @@ function openCloseSaleModal(demoId) {
   const sdr = state.users.find(u => u.id === demo.sdr_id);
   const closer = state.users.find(u => u.id === demo.closer_id);
 
-  const mrrVal = Number(demo.deal_value_mrr || 0);
-  const setupVal = Number(demo.deal_value_setup || 0);
+  // Produtos ativos disponíveis para a empresa
+  const availableProducts = state.products.filter(p => !p.archived && (company === 'all' || p.company === demo.company_id || canAccess(p.company)));
+  const defaultProduct = availableProducts.find(p => p.id === demo.product_id) || availableProducts[0];
 
-  // Sugestão padrão de comissão comercial:
-  // SDR: 10% do 1º fee / MRR ou valor fixo (ex: 50.00)
-  // Closer: 30% do 1º fee ou regra negociada
-  const defaultSdr = sdr ? Math.round(mrrVal * 0.10 * 100) / 100 : 0;
-  const defaultCloser = closer ? Math.round(mrrVal * 0.30 * 100) / 100 : 0;
+  const mrrVal = Number(demo.deal_value_mrr || defaultProduct?.baseMonthly || 0);
+  const setupVal = Number(demo.deal_value_setup || defaultProduct?.baseSetup || 0);
+
+  // Garante que teamsData esteja carregado
+  if (typeof fetchTeams === 'function' && (!teamsData || !teamsData.loaded)) {
+    fetchTeams();
+  }
+
+  const productOptions = availableProducts.map(p => `
+    <option value="${esc(p.id)}" ${defaultProduct?.id === p.id ? 'selected' : ''}>
+      ${esc(p.name)} · ${esc(companyName(p.company))} (Base: ${money(p.baseMonthly || 0)})
+    </option>
+  `).join('');
 
   show(`
-    <h2>Fechar venda (Negócio Ganho)</h2>
-    <p>Confirme os valores do contrato e as comissões atribuídas ao SDR e Closer.</p>
+    <h2>Fechar venda (Negócio Ganho 👍)</h2>
+    <p>Confirme as condições comerciais, apure as comissões e gere o contrato oficial da venda.</p>
+    
     <div class="notice">
       Empresa: <strong>${esc(lead.company_name || 'Lead')}</strong> (${esc(companyName(demo.company_id))})<br>
-      Contato: <strong>${esc(lead.contact_name || 'Não informado')}</strong>
+      Contato: <strong>${esc(lead.contact_name || 'Não informado')}</strong> · 
+      Closer: <strong>${esc(closer ? closer.name : 'Não atribuído')}</strong> · 
+      SDR: <strong>${esc(sdr ? sdr.name : 'Não atribuído')}</strong>
     </div>
+
     <form id="closeSaleForm">
-      <div class="formgrid" style="margin-top:16px;">
-        ${field('closeMrr', 'Valor Mensalidade / MRR (R$)', mrrVal, 'number', 'required min="0" step=".01"')}
-        ${field('closeSetup', 'Valor Implementação / Setup (R$)', setupVal, 'number', 'required min="0" step=".01"')}
-        ${field('closeSdrCommission', `Comissão SDR (${sdr ? sdr.name : 'Não atribuído'}) (R$)`, defaultSdr, 'number', 'min="0" step=".01"')}
-        ${field('closeCloserCommission', `Comissão Closer (${closer ? closer.name : 'Não atribuído'}) (R$)`, defaultCloser, 'number', 'min="0" step=".01"')}
+      <div class="field" style="margin-top:14px;">
+        <label style="font-weight:600;font-size:12px;">Produto Contratado</label>
+        <select id="f_closeProduct" name="closeProduct" onchange="recalculateCloseSaleCommissions('${esc(demoId)}')" style="width:100%;padding:10px;font-weight:600;">
+          ${productOptions || '<option value="">Nenhum produto cadastrado</option>'}
+        </select>
       </div>
-      <p class="small" style="margin-top:12px;">Ao confirmar, o status da demonstração mudará para <strong>Fechado</strong>, o comparecimento será confirmado e o registro entrará no painel de comissões.</p>
+
+      <div class="formgrid" style="margin-top:14px;">
+        ${field('closeMrr', 'Valor Mensalidade / MRR (R$)', mrrVal, 'number', `required min="0" step=".01" oninput="recalculateCloseSaleCommissions('${esc(demoId)}')"`)}
+        ${field('closeSetup', 'Valor Implementação / Setup (R$)', setupVal, 'number', `required min="0" step=".01" oninput="recalculateCloseSaleCommissions('${esc(demoId)}')"`)}
+      </div>
+
+      <div class="formgrid" style="margin-top:10px;">
+        ${field('closeCloserCommission', `Comissão Closer (${closer ? closer.name : 'Vendedor'}) (R$)`, 0, 'number', `min="0" step=".01" onchange="this.dataset.userEdited=true"`)}
+        ${field('closeSdrCommission', `Comissão SDR (${sdr ? sdr.name : 'Pré-vendas'}) (R$)`, 0, 'number', `min="0" step=".01" onchange="this.dataset.userEdited=true"`)}
+      </div>
+      <div id="closeCommissionHint" style="font-size:11px;color:#15803d;margin-top:4px;padding:6px 10px;background:#f0fdf4;border-radius:6px;border:1px solid #bbf7d0;"></div>
+
+      <!-- Seção 1-Click: Criar Contrato Oficial no Comissions -->
+      <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:14px;margin:18px 0 8px;">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;color:var(--navy);cursor:pointer;">
+          <input type="checkbox" id="f_createContract" name="createContract" checked onchange="document.getElementById('contractOptionsSection').style.display=this.checked?'block':'none'">
+          ☑ Gerar Contrato Oficial no módulo Contratos e lançar parcelas no Financeiro
+        </label>
+        <div id="contractOptionsSection" style="margin-top:12px;padding-top:12px;border-top:1px solid #e2e8f0;">
+          <div class="formgrid">
+            <div class="field">
+              <label style="font-size:11px;">Dia de Vencimento da Mensalidade</label>
+              <select id="f_billingDay" name="billingDay" style="width:100%;padding:8px;">
+                <option value="5">Todo dia 05</option>
+                <option value="10" selected>Todo dia 10</option>
+                <option value="15">Todo dia 15</option>
+                <option value="20">Todo dia 20</option>
+                <option value="25">Todo dia 25</option>
+              </select>
+            </div>
+            <div class="field">
+              <label style="font-size:11px;">Parcelamento da Implementação / Setup</label>
+              <select id="f_setupParts" name="setupParts" style="width:100%;padding:8px;">
+                <option value="1">À vista (1x)</option>
+                <option value="2">2 parcelas mensais</option>
+                <option value="3">3 parcelas mensais</option>
+                <option value="4">4 parcelas mensais</option>
+                <option value="6">6 parcelas mensais</option>
+              </select>
+            </div>
+            <div class="field">
+              <label style="font-size:11px;">Forma de Pagamento</label>
+              <select id="f_paymentMethod" name="paymentMethod" style="width:100%;padding:8px;">
+                <option value="Boleto bancário">Boleto bancário</option>
+                <option value="Pix">Pix</option>
+                <option value="Cartão de crédito">Cartão de crédito</option>
+                <option value="Transferência bancária">Transferência bancária</option>
+              </select>
+            </div>
+            <div class="field">
+              <label style="font-size:11px;">Data de Início do Contrato</label>
+              <input type="date" id="f_contractStart" name="contractStart" value="${localToday()}" style="width:100%;padding:8px;">
+            </div>
+          </div>
+          <div class="field" style="margin-top:10px;">
+            <label style="font-size:11px;">Link da Reunião / Proposta Assinada (opcional)</label>
+            <input type="url" id="f_proposalUrl" name="proposalUrl" placeholder="https://meet.google.com/... ou link do drive" style="width:100%;padding:8px;">
+          </div>
+        </div>
+      </div>
+
+      <p class="small" style="margin-top:12px;">Ao confirmar, a demonstração será marcada como <strong>Fechada</strong>, comparecimento confirmado, a comissão entra no painel e o contrato oficial é criado.</p>
       ${actions()}
     </form>
   `, async (formData) => {
@@ -1046,22 +1380,121 @@ function openCloseSaleModal(demoId) {
       const sdrCommission = Number(formData.get('closeSdrCommission') || 0);
       const closerCommission = Number(formData.get('closeCloserCommission') || 0);
 
+      let createdContractId = null;
+
+      // 1-Click: Geração do Contrato Oficial no Comissions
+      if (formData.get('createContract')) {
+        const prodId = formData.get('closeProduct');
+        const prod = state.products.find(p => p.id === prodId) || availableProducts[0];
+        const billingDay = Number(formData.get('billingDay') || 10);
+        const setupParts = Number(formData.get('setupParts') || 1);
+        const startDate = formData.get('contractStart') || localToday();
+        const year = startDate.slice(0, 4);
+
+        // Gera código CTR-YYYY-NNNN
+        const usedCodes = new Set((state.contracts || []).map(c => c.code));
+        let seq = 1;
+        while (usedCodes.has(`CTR-${year}-${String(seq).padStart(4, '0')}`)) seq++;
+        const code = `CTR-${year}-${String(seq).padStart(4, '0')}`;
+
+        const contractId = Date.now() * 1000 + (state.contracts || []).length;
+        const saleId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'sale-' + Date.now();
+
+        const firstDue = `${year}-${startDate.slice(5, 7)}-${String(billingDay).padStart(2, '0')}`;
+        const finalFirstDue = firstDue < startDate ? termsMonth(firstDue, 1) : firstDue;
+        const nextFeeDue = termsMonth(finalFirstDue, 1);
+
+        const newContract = {
+          id: contractId,
+          code,
+          saleId,
+          company: demo.company_id,
+          client: lead.company_name || 'Cliente Fechado',
+          product: prod ? prod.id : 'product-default',
+          plan: prod ? prod.name : 'Plano Comercial',
+          monthly: mrr,
+          setup: setup,
+          seller: demo.closer_id || currentUser,
+          dev: '',
+          partner: '',
+          start: startDate,
+          firstDue: finalFirstDue,
+          nextFeeDue: nextFeeDue,
+          billingDay: billingDay,
+          status: 'Ativo',
+          reviewStatus: 'approved',
+          billingMode: 'ongoing',
+          billingMonths: null,
+          cycles: 12,
+          setupParts: setupParts,
+          fee: 1,
+          paid: false,
+          started: true,
+          accepted: true,
+          schedule: true,
+          version: prod?.version || 1,
+          rules: prod?.rules ? { ...prod.rules } : { first: 30, next: 10, setup: 20, devFirst: 0, devSetup: 0, partner: 0, months: 6 }
+        };
+
+        state.contracts.push(newContract);
+
+        // Gera as faturas recorrentes
+        for (let j = 0; j < 12; j++) {
+          state.invoices.push({
+            id: typeof uid === 'function' ? uid('inv') : 'inv-' + Math.random().toString(36).slice(2, 9),
+            company: demo.company_id,
+            contractId: contractId,
+            kind: 'fee',
+            fee: j + 1,
+            amount: mrr,
+            due: feeDueDate(newContract, j + 1),
+            paidAt: null
+          });
+        }
+
+        // Gera as faturas de setup se houver
+        if (setup > 0) {
+          const totalCents = Math.round(setup * 100);
+          const partCents = Math.floor(totalCents / setupParts);
+          for (let j = 0; j < setupParts; j++) {
+            state.invoices.push({
+              id: typeof uid === 'function' ? uid('inv') : 'inv-' + Math.random().toString(36).slice(2, 9),
+              company: demo.company_id,
+              contractId: contractId,
+              kind: 'setup',
+              part: j + 1,
+              fee: 0,
+              amount: (partCents + (j === setupParts - 1 ? totalCents - partCents * setupParts : 0)) / 100,
+              due: termsMonth(finalFirstDue, j),
+              paidAt: null
+            });
+          }
+        }
+
+        createdContractId = contractId;
+        await save();
+      }
+
       await callDemosApi('demo-close-sale', {
         demoId,
         mrr,
         setup,
         sdrCommission,
-        closerCommission
+        closerCommission,
+        contractId: createdContractId
       });
 
       document.getElementById('modal').close();
-      toast('Venda fechada com sucesso! Comissão registrada.');
+      toast(createdContractId ? '🎉 Venda fechada! Contrato oficial gerado e faturas lançadas no Financeiro.' : 'Venda fechada com sucesso! Comissão registrada.');
       await fetchDemos(true);
       render();
     } catch (err) {
       toast(err.message);
     }
   });
+
+  // Executa o cálculo inicial das comissões
+  setTimeout(() => recalculateCloseSaleCommissions(demoId), 60);
 }
 
 // Modal: Registrar Perda (Deal Lost)
