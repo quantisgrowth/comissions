@@ -12,10 +12,178 @@ const commercialRoleLabels = {
   account_manager: 'Gerente de Contas'
 };
 
+async function callTeamsApi(action, extra = {}) {
+  // 1. Tenta a Edge Function comissions-api
+  try {
+    const res = await api(action, extra);
+    if (res && !res.error) return res;
+    if (res && res.error && res.error !== 'Ação inválida.') throw Error(res.error);
+  } catch (err) {
+    if (err.message && !err.message.includes('Ação inválida.')) throw err;
+  }
+
+  // 2. Fallback direto via Supabase REST API (PostgREST)
+  const token = typeof cloudSession !== 'undefined' && cloudSession ? cloudSession.access_token : null;
+  const headers = {
+    apikey: CLOUD_KEY,
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: 'Bearer ' + token } : {})
+  };
+  const u = typeof user === 'function' ? user() : null;
+  const tenantId = u?.tenant_id || '00000000-0000-0000-0000-000000000001';
+
+  if (action === 'teams-list') {
+    try {
+      const [teamsRes, membersRes, productsRes, rulesRes] = await Promise.all([
+        fetch(CLOUD_URL + '/rest/v1/cm_teams?order=name.asc', { headers }).then(r => r.ok ? r.json() : []),
+        fetch(CLOUD_URL + '/rest/v1/cm_team_members?active=eq.true', { headers }).then(r => r.ok ? r.json() : []),
+        fetch(CLOUD_URL + '/rest/v1/cm_team_products', { headers }).then(r => r.ok ? r.json() : []),
+        fetch(CLOUD_URL + '/rest/v1/cm_commission_rules', { headers }).then(r => r.ok ? r.json() : [])
+      ]);
+      return {
+        teams: Array.isArray(teamsRes) ? teamsRes : [],
+        members: Array.isArray(membersRes) ? membersRes : [],
+        teamProducts: Array.isArray(productsRes) ? productsRes : [],
+        rules: Array.isArray(rulesRes) ? rulesRes : []
+      };
+    } catch {
+      return { teams: [], members: [], teamProducts: [], rules: [] };
+    }
+  }
+
+  if (action === 'team-save') {
+    const t = extra.team || {};
+    const name = String(t.name || '').trim();
+    const companyId = String(t.company_id || '').trim();
+    if (name.length < 2 || name.length > 100) throw Error('Nome do time deve ter entre 2 e 100 caracteres.');
+    if (!companyId) throw Error('Selecione a empresa vinculada ao time.');
+
+    const body = {
+      tenant_id: tenantId,
+      company_id: companyId,
+      name,
+      active: t.active !== false
+    };
+
+    if (t.id) {
+      const res = await fetch(CLOUD_URL + '/rest/v1/cm_teams?id=eq.' + encodeURIComponent(t.id), {
+        method: 'PATCH',
+        headers: { ...headers, Prefer: 'return=representation' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok) throw Error(data.message || data.hint || 'Erro ao atualizar time comercial.');
+      return { saved: true, team: data[0] };
+    } else {
+      const res = await fetch(CLOUD_URL + '/rest/v1/cm_teams', {
+        method: 'POST',
+        headers: { ...headers, Prefer: 'return=representation' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok) throw Error(data.message || data.hint || 'Erro ao criar time comercial no Supabase.');
+      return { saved: true, team: data[0] };
+    }
+  }
+
+  if (action === 'team-member-add') {
+    const { teamId, profileId, role } = extra;
+    const body = {
+      tenant_id: tenantId,
+      team_id: teamId,
+      profile_id: profileId,
+      commercial_role: role || 'closer',
+      active: true
+    };
+    const res = await fetch(CLOUD_URL + '/rest/v1/cm_team_members', {
+      method: 'POST',
+      headers: { ...headers, Prefer: 'resolution=merge-duplicates,return=representation' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) throw Error(data.message || 'Erro ao adicionar membro ao time.');
+    return { saved: true, member: data[0] };
+  }
+
+  if (action === 'team-member-remove') {
+    const { teamId, profileId } = extra;
+    const res = await fetch(CLOUD_URL + '/rest/v1/cm_team_members?team_id=eq.' + encodeURIComponent(teamId) + '&profile_id=eq.' + encodeURIComponent(profileId), {
+      method: 'PATCH',
+      headers: { ...headers, Prefer: 'return=representation' },
+      body: JSON.stringify({ active: false })
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw Error(data.message || 'Erro ao remover membro do time.');
+    }
+    return { removed: true };
+  }
+
+  if (action === 'team-products-set') {
+    const { teamId, productIds } = extra;
+    await fetch(CLOUD_URL + '/rest/v1/cm_team_products?team_id=eq.' + encodeURIComponent(teamId), {
+      method: 'DELETE',
+      headers
+    });
+    if (productIds && productIds.length > 0) {
+      const items = productIds.map(pid => ({
+        tenant_id: tenantId,
+        team_id: teamId,
+        product_id: pid
+      }));
+      const res = await fetch(CLOUD_URL + '/rest/v1/cm_team_products', {
+        method: 'POST',
+        headers: { ...headers, Prefer: 'return=representation' },
+        body: JSON.stringify(items)
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw Error(data.message || 'Erro ao vincular produtos ao time.');
+      }
+    }
+    return { updated: true };
+  }
+
+  if (action === 'commission-rule-save') {
+    const r = extra.rule || {};
+    const body = {
+      tenant_id: tenantId,
+      product_id: r.product_id,
+      team_id: r.team_id || null,
+      role_target: r.role_target || 'closer',
+      first_fee_percent: Number(r.first_fee_percent || 0),
+      next_fee_percent: Number(r.next_fee_percent || 0),
+      setup_percent: Number(r.setup_percent || 0),
+      months: Number(r.months || 6)
+    };
+    if (r.id) {
+      const res = await fetch(CLOUD_URL + '/rest/v1/cm_commission_rules?id=eq.' + encodeURIComponent(r.id), {
+        method: 'PATCH',
+        headers: { ...headers, Prefer: 'return=representation' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok) throw Error(data.message || 'Erro ao salvar regra de comissão.');
+      return { saved: true, rule: data[0] };
+    } else {
+      const res = await fetch(CLOUD_URL + '/rest/v1/cm_commission_rules', {
+        method: 'POST',
+        headers: { ...headers, Prefer: 'return=representation' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok) throw Error(data.message || 'Erro ao salvar regra de comissão.');
+      return { saved: true, rule: data[0] };
+    }
+  }
+
+  throw Error('Ação inválida.');
+}
+
 async function fetchTeams(force = false) {
   if (teamsData.loaded && !force) return teamsData;
   try {
-    const res = await api('teams-list');
+    const res = await callTeamsApi('teams-list');
     teamsData = {
       teams: res.teams || [],
       members: res.members || [],
@@ -229,7 +397,7 @@ function openTeamModal(id = null) {
       company_id: f.get('company_id'),
       active: true
     };
-    await api('team-save', { team: payload });
+    await callTeamsApi('team-save', { team: payload });
     await fetchTeams(true);
     document.getElementById('modal').close();
     render();
@@ -257,7 +425,7 @@ function openTeamMemberModal(teamId) {
       ${actions()}
     </form>
   `, async f => {
-    await api('team-member-add', {
+    await callTeamsApi('team-member-add', {
       teamId,
       profileId: f.get('profileId'),
       role: f.get('role')
@@ -271,7 +439,7 @@ function openTeamMemberModal(teamId) {
 
 async function removeTeamMember(teamId, profileId) {
   try {
-    await api('team-member-remove', { teamId, profileId });
+    await callTeamsApi('team-member-remove', { teamId, profileId });
     await fetchTeams(true);
     render();
     toast('Membro removido do time comercial.');
@@ -302,7 +470,7 @@ function openTeamProductsModal(teamId, companyId) {
     </form>
   `, async f => {
     const selectedIds = f.getAll('productIds');
-    await api('team-products-set', { teamId, productIds: selectedIds });
+    await callTeamsApi('team-products-set', { teamId, productIds: selectedIds });
     await fetchTeams(true);
     document.getElementById('modal').close();
     render();
@@ -348,7 +516,7 @@ function openTeamRuleModal(teamId, companyId, ruleId = null) {
       setup_percent: Number(f.get('setup_percent')),
       months: Number(f.get('months'))
     };
-    await api('commission-rule-save', { rule: payload });
+    await callTeamsApi('commission-rule-save', { rule: payload });
     await fetchTeams(true);
     document.getElementById('modal').close();
     render();
