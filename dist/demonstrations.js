@@ -83,7 +83,7 @@ async function callDemosApi(action, extra = {}) {
   if (action === 'demos-list') {
     try {
       const [demosRes, leadsRes, reschedulesRes, commissionsRes] = await Promise.all([
-        fetch(CLOUD_URL + '/rest/v1/cm_demonstrations?order=current_scheduled_date.desc', { headers }).then(r => r.ok ? r.json() : []),
+        fetch(CLOUD_URL + '/rest/v1/cm_demonstrations?archived_at=is.null&order=current_scheduled_date.desc', { headers }).then(r => r.ok ? r.json() : []),
         fetch(CLOUD_URL + '/rest/v1/cm_leads', { headers }).then(r => r.ok ? r.json() : []),
         fetch(CLOUD_URL + '/rest/v1/cm_reschedule_logs?order=created_at.desc', { headers }).then(r => r.ok ? r.json() : []),
         fetch(CLOUD_URL + '/rest/v1/cm_sales_commissions', { headers }).then(r => r.ok ? r.json() : [])
@@ -625,7 +625,7 @@ function renderDemosTable(demos, leadsMap, commissionsMap) {
     `;
 
     // Datas: Original vs Atual vs Realização
-    const scheduledFormatted = formatDemoDateTime(d.current_scheduled_date);
+    const scheduledFormatted = d.current_scheduled_date ? formatDemoDateTime(d.current_scheduled_date) : 'A definir';
     const origFormatted = formatDemoDateTime(d.first_scheduled_date);
     const completedFormatted = d.completed_date ? formatDemoDateTime(d.completed_date) : null;
     const isFinished = isCompleted || ['realizado', 'fechado'].includes(d.status);
@@ -693,13 +693,14 @@ function renderDemosTable(demos, leadsMap, commissionsMap) {
         <button type="button" class="btn secondary" onclick="openManualDemoModal('${esc(d.id)}')" style="padding:6px 9px;font-size:13px;border-radius:6px;" title="Editar Dados Manuais">
           ✏️
         </button>
+        ${canManage() && !d.is_completed && ['agendado','aguardando_reagendamento'].includes(d.status) ? productAction('delete','Excluir agendamento',`openArchiveDemo('${actionId(d.id)}')`) : ''}
       </div>
     `;
 
     return [
       leadHtml,
       contactHtml,
-      datesHtml,
+      datesHtml + `<div class="small">Entrada: ${formatDemoDateTime(d.created_at)}</div>`,
       rescheduleBadge,
       respHtml,
       showRateToggle,
@@ -714,7 +715,7 @@ function renderDemosTable(demos, leadsMap, commissionsMap) {
       ${table([
         'Lead / Empresa',
         'Contato',
-        'Data & Ciclo',
+        'Reunião e ciclo',
         'Remarcações',
         'Responsáveis',
         'Show Rate',
@@ -874,7 +875,7 @@ function openManualDemoModal(demoId = null) {
     }
   };
 
-  const defaultDate = toInputDate(demo?.current_scheduled_date || new Date(Date.now() + 24 * 3600 * 1000).toISOString());
+  const defaultDate = (demo ? (demo.current_scheduled_date ? toInputDate(demo.current_scheduled_date) : '') : toInputDate(new Date(Date.now() + 24 * 3600 * 1000).toISOString()));
 
   show(`
     <h2>${isNew ? 'Novo agendamento de demonstração' : 'Editar demonstração'}</h2>
@@ -1544,3 +1545,16 @@ function openLossModal(demoId) {
   });
 }
 
+
+function openArchiveDemo(id) {
+  const demo = demosData.demos.find(d => d.id === id);
+  if (!demo || !canManage()) return;
+  const lead = demosData.leads.find(l => l.id === demo.lead_id);
+  show(`<h2>Excluir agendamento</h2><p>Remover o agendamento de <strong>${esc(lead?.company_name || 'Lead')}</strong> da lista? O cadastro do lead e o histórico serão preservados.</p><form>${actions().replace('Salvar','Excluir agendamento')}</form>`, async () => {
+    await callDemosApi('demo-archive', {demoId:id});
+    document.getElementById('modal').close();
+    await fetchDemos(true);
+    render();
+    toast('Agendamento excluído.');
+  });
+}

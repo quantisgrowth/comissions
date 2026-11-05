@@ -22,11 +22,14 @@ const { stripTypeScriptTypes } = require('node:module');
   const createQueryBuilder = (table) => {
     let currentData = mockDbData[table.replace('cm_', '')] || [];
     let filters = [];
+    let patch;
+    const rows = () => currentData.filter(r => filters.every(f => f(r))).map(r => patch ? Object.assign(r, patch) : r);
     let isSingle = false;
     let isMaybeSingle = false;
 
     const builder = {
       select: () => builder,
+      is: (col, val) => { filters.push(row => (row[col] ?? null) === val); return builder; },
       eq: (col, val) => {
         filters.push((row) => row[col] === val);
         return builder;
@@ -39,16 +42,16 @@ const { stripTypeScriptTypes } = require('node:module');
       or: () => builder,
       order: () => builder,
       limit: () => builder,
-      then: (resolve) => resolve({ data: currentData.filter(r => filters.every(f => f(r))), error: null }),
+      then: (resolve) => resolve({ data: rows(), error: null }),
       single: async () => {
         isSingle = true;
-        const res = currentData.filter(r => filters.every(f => f(r)));
+        const res = rows();
         if (!res.length) throw Error('Row not found');
         return { data: res[0], error: null };
       },
       maybeSingle: async () => {
         isMaybeSingle = true;
-        const res = currentData.filter(r => filters.every(f => f(r)));
+        const res = rows();
         return { data: res[0] || null, error: null };
       },
       insert: (payload) => {
@@ -60,19 +63,7 @@ const { stripTypeScriptTypes } = require('node:module');
           })
         };
       },
-      update: (payload) => {
-        const rows = currentData.filter(r => filters.every(f => f(r)));
-        rows.forEach(r => Object.assign(r, payload));
-        return {
-          eq: (col, val) => {
-            filters.push((row) => row[col] === val);
-            return builder;
-          },
-          select: () => ({
-            single: async () => ({ data: rows[0], error: null })
-          })
-        };
-      },
+      update: (payload) => { patch = payload; return builder; },
       upsert: (payload, opts) => {
         const onConflict = opts?.onConflict;
         let existing = null;
@@ -264,6 +255,20 @@ const { stripTypeScriptTypes } = require('node:module');
   assert.equal(Array.isArray(logsResult.logs), true);
   assert.equal(logsResult.logs.length, mockDbData.webhook_logs.length);
 
+  const event = { event:'demo_scheduled', company_id:'quantis', data:{ deal_id:'pending-date', company_name:'Empresa teste' } };
+  const incoming = await ctx.handleCrmWebhook(mockDb, event, 'quantis_crm_secret_2026');
+  assert.equal(incoming.ok, true);
+  const pending = mockDbData.demonstrations.find(d => d.id === incoming.demoId);
+  assert.equal(pending.current_scheduled_date, null);
+  const manager = {id:'admin', role:'Gestor', companies:['quantis']};
+  await assert.rejects(ctx.handleDemonstrations(mockDb, {...manager, companies:['other']}, {action:'demo-archive', demoId:pending.id}));
+  await assert.rejects(ctx.handleDemonstrations(mockDb, {...manager, role:'Vendedor'}, {action:'demo-archive', demoId:pending.id}));
+  await ctx.handleDemonstrations(mockDb, manager, {action:'demo-reschedule', demoId:pending.id, newDate:'2026-11-20T14:00:00-03:00'});
+  assert.equal(pending.first_scheduled_date, '2026-11-20T14:00:00-03:00');
+  assert.equal(pending.reschedule_count, 0);
+  await ctx.handleDemonstrations(mockDb, manager, {action:'demo-archive', demoId:pending.id});
+  assert.ok(pending.archived_at);
+  assert.equal((await ctx.handleCrmWebhook(mockDb, event, 'quantis_crm_secret_2026')).action,'ignored_archived');
   console.log('Verified CRM Webhook (scheduled, rescheduled, no_show, completed, deal_won, idempotency), Cycle Days SLA, and Platform Demonstrations management.');
 })().catch(e => {
   console.error(e);

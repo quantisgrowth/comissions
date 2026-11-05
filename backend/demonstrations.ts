@@ -5,11 +5,27 @@ export async function handleDemonstrations(db: any, p: any, input: any) {
   const tenantId = p.tenant_id || '00000000-0000-0000-0000-000000000001';
   const isManager = ['Administrador', 'Gestor'].includes(p.role);
 
+  if (p.role !== 'Administrador' && !p.modules?.includes('Demonstrações') && p.modules != null) throw Error('Sem acesso a Demonstrações.');
+
+  if (input.action === 'demo-archive') {
+    if (!isManager) throw Error('Somente administradores e gestores podem excluir agendamentos.');
+    let query = db.from('cm_demonstrations').update({ archived_at: new Date().toISOString() })
+      .eq('tenant_id', tenantId).eq('id', input.demoId).is('archived_at', null)
+      .in('status', ['agendado', 'aguardando_reagendamento']).eq('is_completed', false);
+    if (!p.all_companies) query = query.in('company_id', p.companies);
+    const {data, error} = await query.select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) throw Error('Agendamento indisponível para exclusão.');
+    await db.from('cm_audit').insert({actor:p.id, action:'demo-archive'});
+    return {archived:true};
+  }
+
   // 1. Listagem de demonstrações para o usuário autenticado
   if (input.action === 'demos-list') {
-    let query = db.from('cm_demonstrations').select('*').eq('tenant_id', tenantId);
+    let query = db.from('cm_demonstrations').select('*').eq('tenant_id', tenantId).is('archived_at', null);
 
     if (input.companyId && input.companyId !== 'all') {
+      if (!p.all_companies && !p.companies.includes(input.companyId)) throw Error('Empresa não autorizada.');
       query = query.eq('company_id', input.companyId);
     } else if (!p.all_companies) {
       query = query.in('company_id', p.companies);
@@ -46,6 +62,13 @@ export async function handleDemonstrations(db: any, p: any, input: any) {
     const companyId = String(d.company_id || '').trim();
     if (!companyId) throw Error('Selecione a empresa vinculada à demonstração.');
     if (!p.all_companies && !p.companies.includes(companyId)) throw Error('Você não tem acesso a esta empresa.');
+
+    let previous: any = null;
+    if (d.id) {
+      const result = await db.from('cm_demonstrations').select('*').eq('id', d.id).eq('tenant_id', tenantId).is('archived_at', null).single();
+      previous = result.data;
+      if (result.error || !previous || (!p.all_companies && !p.companies.includes(previous.company_id))) throw Error('Demonstração não encontrada.');
+    }
 
     // Localiza ou cria o lead
     let leadId = d.lead_id;
@@ -84,7 +107,7 @@ export async function handleDemonstrations(db: any, p: any, input: any) {
 
     let result: any;
     if (d.id) {
-      const { data, error } = await db.from('cm_demonstrations').update(fields).eq('id', d.id).eq('tenant_id', tenantId).select().single();
+      const { data, error } = await db.from('cm_demonstrations').update({...fields, first_scheduled_date: previous.first_scheduled_date || scheduledDate}).is('archived_at', null).eq('id', d.id).eq('tenant_id', tenantId).select().single();
       if (error) throw error;
       result = data;
     } else {
@@ -104,10 +127,10 @@ export async function handleDemonstrations(db: any, p: any, input: any) {
   // 3. Reagendamento operacional com registro de histórico
   if (input.action === 'demo-reschedule') {
     const { demoId, newDate, reason } = input;
-    if (!demoId || !newDate) throw Error('Dados do reagendamento incompletos.');
+    if (!demoId || !newDate || !Number.isFinite(Date.parse(newDate))) throw Error('Dados do reagendamento incompletos.');
 
     const { data: demo, error: fetchErr } = await db.from('cm_demonstrations').select('*').eq('id', demoId).eq('tenant_id', tenantId).single();
-    if (fetchErr || !demo) throw Error('Demonstração não encontrada.');
+    if (fetchErr || !demo || demo.archived_at || (!p.all_companies && !p.companies.includes(demo.company_id))) throw Error('Demonstração não encontrada.');
 
     // Grava log do reagendamento
     await db.from('cm_reschedule_logs').insert({
@@ -121,7 +144,8 @@ export async function handleDemonstrations(db: any, p: any, input: any) {
     // Atualiza a demonstração
     const { data: updated, error: updErr } = await db.from('cm_demonstrations').update({
       current_scheduled_date: newDate,
-      reschedule_count: (demo.reschedule_count || 0) + 1,
+      first_scheduled_date: demo.first_scheduled_date || newDate,
+      reschedule_count: (demo.reschedule_count || 0) + (demo.current_scheduled_date ? 1 : 0),
       status: 'agendado',
       is_completed: false,
       updated_at: new Date().toISOString()
@@ -138,7 +162,7 @@ export async function handleDemonstrations(db: any, p: any, input: any) {
     if (!demoId || !status) throw Error('Dados de status incompletos.');
 
     const { data: demo, error: fetchErr } = await db.from('cm_demonstrations').select('*').eq('id', demoId).eq('tenant_id', tenantId).single();
-    if (fetchErr || !demo) throw Error('Demonstração não encontrada.');
+    if (fetchErr || !demo || demo.archived_at || (!p.all_companies && !p.companies.includes(demo.company_id))) throw Error('Demonstração não encontrada.');
 
     const updates: any = {
       status,
@@ -150,9 +174,9 @@ export async function handleDemonstrations(db: any, p: any, input: any) {
       if (updates.is_completed && !demo.completed_date) {
         const completedAt = new Date().toISOString();
         updates.completed_date = completedAt;
-        const start = new Date(demo.first_scheduled_date).getTime();
+        const start = (demo.first_scheduled_date ? Date.parse(demo.first_scheduled_date) : NaN);
         const finish = new Date(completedAt).getTime();
-        updates.cycle_days = Math.max(0, Math.round((finish - start) / (1000 * 60 * 60 * 24)));
+        updates.cycle_days = Number.isFinite(start) ? Math.max(0, Math.round((finish - start) / (1000 * 60 * 60 * 24))) : null;
       }
     }
 
@@ -173,13 +197,13 @@ export async function handleDemonstrations(db: any, p: any, input: any) {
     if (!demoId) throw Error('Identificador da demonstração inválido.');
 
     const { data: demo, error: fetchErr } = await db.from('cm_demonstrations').select('*').eq('id', demoId).eq('tenant_id', tenantId).single();
-    if (fetchErr || !demo) throw Error('Demonstração não encontrada.');
+    if (fetchErr || !demo || demo.archived_at || (!p.all_companies && !p.companies.includes(demo.company_id))) throw Error('Demonstração não encontrada.');
 
     // Atualiza a demonstração como fechada e realizada
     const completedAt = demo.completed_date || new Date().toISOString();
-    const start = new Date(demo.first_scheduled_date).getTime();
+    const start = (demo.first_scheduled_date ? Date.parse(demo.first_scheduled_date) : NaN);
     const finish = new Date(completedAt).getTime();
-    const cycleDays = Math.max(0, Math.round((finish - start) / (1000 * 60 * 60 * 24)));
+    const cycleDays = Number.isFinite(start) ? Math.max(0, Math.round((finish - start) / (1000 * 60 * 60 * 24))) : null;
 
     await db.from('cm_demonstrations').update({
       status: 'fechado',
@@ -333,12 +357,14 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
   // 3. Localiza demonstração existente pelo crm_deal_id (idempotência)
   let existingDemo: any = null;
   if (crmDealId) {
-    const { data: found } = await db.from('cm_demonstrations').select('*').eq('crm_deal_id', crmDealId).maybeSingle();
+    const { data: found } = await db.from('cm_demonstrations').select('*').eq('crm_deal_id', crmDealId).eq('tenant_id', tenantId).eq('company_id', companyId).maybeSingle();
     existingDemo = found;
+    if (existingDemo?.archived_at) return await recordLog({ok:true,action:'ignored_archived',demoId:existingDemo.id});
   }
 
-  const scheduledDate = data.scheduled_at || data.current_scheduled_date || new Date().toISOString();
+  const scheduledDate = data.scheduled_at || data.current_scheduled_date || (event === 'demo_rescheduled' ? data.new_date : null) || null;
 
+  if (scheduledDate && !Number.isFinite(Date.parse(scheduledDate))) return await recordLog({ok:false,error:'Data da reunião inválida.',status:400});
   // 4. Trata os eventos do DataCrazy
   if (event === 'demo_scheduled') {
     if (existingDemo) {
@@ -365,6 +391,8 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
     return await recordLog({ ok: true, action: 'created', demoId: demo.id });
   }
 
+  if (event === 'demo_rescheduled' && !scheduledDate) return await recordLog({ok:false,error:'Informe a nova data da reunião.',status:400});
+
   // Se não existir demonstração para os eventos seguintes, inicializa a base primeiro
   if (!existingDemo) {
     const { data: demo, error: demoErr } = await db.from('cm_demonstrations').insert({
@@ -387,7 +415,8 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
   }
 
   if (event === 'demo_rescheduled') {
-    const newDate = data.new_date || data.scheduled_at || new Date().toISOString();
+    const newDate = data.new_date || data.scheduled_at;
+    if (!newDate || !Number.isFinite(Date.parse(newDate))) return await recordLog({ok:false,error:'Informe a nova data da reunião.',status:400});
     await db.from('cm_reschedule_logs').insert({
       demonstration_id: existingDemo.id,
       previous_date: existingDemo.current_scheduled_date,
@@ -397,7 +426,8 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
 
     await db.from('cm_demonstrations').update({
       current_scheduled_date: newDate,
-      reschedule_count: (existingDemo.reschedule_count || 0) + 1,
+      first_scheduled_date: existingDemo.first_scheduled_date || newDate,
+      reschedule_count: (existingDemo.reschedule_count || 0) + (existingDemo.current_scheduled_date ? 1 : 0),
       status: 'agendado',
       is_completed: false,
       updated_at: new Date().toISOString()
@@ -417,9 +447,9 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
 
   if (event === 'demo_completed') {
     const completedAt = data.completed_at || new Date().toISOString();
-    const start = new Date(existingDemo.first_scheduled_date).getTime();
+    const start = (existingDemo.first_scheduled_date ? Date.parse(existingDemo.first_scheduled_date) : NaN);
     const finish = new Date(completedAt).getTime();
-    const cycleDays = Math.max(0, Math.round((finish - start) / (1000 * 60 * 60 * 24)));
+    const cycleDays = Number.isFinite(start) ? Math.max(0, Math.round((finish - start) / (1000 * 60 * 60 * 24))) : null;
 
     await db.from('cm_demonstrations').update({
       status: 'realizado',
@@ -435,9 +465,9 @@ export async function handleCrmWebhook(db: any, payload: any, secretHeader: stri
     const mrr = Number(data.mrr || data.deal_value_mrr || existingDemo.deal_value_mrr || 0);
     const setup = Number(data.setup || data.deal_value_setup || existingDemo.deal_value_setup || 0);
     const completedAt = existingDemo.completed_date || new Date().toISOString();
-    const start = new Date(existingDemo.first_scheduled_date).getTime();
+    const start = (existingDemo.first_scheduled_date ? Date.parse(existingDemo.first_scheduled_date) : NaN);
     const finish = new Date(completedAt).getTime();
-    const cycleDays = Math.max(0, Math.round((finish - start) / (1000 * 60 * 60 * 24)));
+    const cycleDays = Number.isFinite(start) ? Math.max(0, Math.round((finish - start) / (1000 * 60 * 60 * 24))) : null;
 
     await db.from('cm_demonstrations').update({
       status: 'fechado',
