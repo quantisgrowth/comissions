@@ -70,34 +70,42 @@ export async function handleDemonstrations(db: any, p: any, input: any) {
       if (result.error || !previous || (!p.all_companies && !p.companies.includes(previous.company_id))) throw Error('Demonstração não encontrada.');
     }
 
-    // Localiza ou cria o lead
-    let leadId = d.lead_id;
-    if (!leadId) {
-      const companyName = String(d.company_name || '').trim();
-      if (!companyName) throw Error('Informe o nome da empresa/lead.');
-      const { data: newLead, error: leadErr } = await db.from('cm_leads').insert({
-        tenant_id: tenantId,
-        company_id: companyId,
-        company_name: companyName,
-        contact_name: d.contact_name ? String(d.contact_name).trim() : null,
-        phone: d.phone ? String(d.phone).trim() : null,
-        email: d.email ? String(d.email).trim().toLowerCase() : null,
-        segment: d.segment ? String(d.segment).trim() : null
-      }).select().single();
-      if (leadErr) throw leadErr;
-      leadId = newLead.id;
+    const scheduledDate = d.current_scheduled_date || d.first_scheduled_date || previous?.current_scheduled_date || null;
+    if (scheduledDate && !Number.isFinite(Date.parse(scheduledDate))) throw Error('Data da reunião inválida.');
+    if (previous && previous.company_id !== companyId) throw Error('A empresa vinculada não pode ser alterada nesta edição.');
+    if (previous && !isManager && previous.sdr_id !== p.id && previous.closer_id !== p.id) throw Error('Você não pode editar esta demonstração.');
+
+    const leadFields: Record<string, any> = {};
+    for (const key of ['company_name', 'contact_name', 'phone', 'email', 'segment']) {
+      if (!Object.prototype.hasOwnProperty.call(d, key)) continue;
+      const value = String(d[key] ?? '').trim();
+      if (key === 'company_name' && !value) throw Error('Informe o nome da empresa/lead.');
+      leadFields[key] = key === 'email' ? value.toLowerCase() || null : value || null;
+    }
+    let leadId = previous?.lead_id;
+    let lead: any;
+    if (leadId && Object.keys(leadFields).length) {
+      const { data, error } = await db.from('cm_leads').update(leadFields)
+        .eq('tenant_id', tenantId).eq('company_id', companyId).eq('id', leadId).select().single();
+      if (error || !data) throw Error('Não foi possível salvar os dados do lead.');
+      lead = data;
+    } else if (!leadId) {
+      if (!leadFields.company_name) throw Error('Informe o nome da empresa/lead.');
+      const { data, error } = await db.from('cm_leads').insert({tenant_id: tenantId, company_id: companyId, ...leadFields}).select().single();
+      if (error || !data) throw Error('Não foi possível cadastrar o lead.');
+      lead = data;
+      leadId = data.id;
     }
 
-    const scheduledDate = d.current_scheduled_date || d.first_scheduled_date || new Date().toISOString();
     const fields = {
       tenant_id: tenantId,
       company_id: companyId,
       lead_id: leadId,
       sdr_id: d.sdr_id || null,
       closer_id: d.closer_id || p.id,
-      product_id: d.product_id || null,
+      product_id: d.product_id ?? previous?.product_id ?? null,
       status: d.status || 'agendado',
-      is_completed: d.is_completed === true,
+      is_completed: d.is_completed === undefined ? !!previous?.is_completed : d.is_completed === true,
       current_scheduled_date: scheduledDate,
       deal_value_mrr: Number(d.deal_value_mrr || 0),
       deal_value_setup: Number(d.deal_value_setup || 0),
@@ -120,8 +128,9 @@ export async function handleDemonstrations(db: any, p: any, input: any) {
       result = data;
     }
 
+    if (!result?.id) throw Error('Não foi possível confirmar o salvamento da demonstração.');
     await db.from('cm_audit').insert({ actor: p.id, action: 'demo-save' });
-    return { saved: true, demo: result };
+    return { saved: true, demo: result, lead };
   }
 
   // 3. Reagendamento operacional com registro de histórico

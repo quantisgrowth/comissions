@@ -266,6 +266,15 @@ const { stripTypeScriptTypes } = require('node:module');
   await ctx.handleDemonstrations(mockDb, manager, {action:'demo-reschedule', demoId:pending.id, newDate:'2026-11-20T14:00:00-03:00'});
   assert.equal(pending.first_scheduled_date, '2026-11-20T14:00:00-03:00');
   assert.equal(pending.reschedule_count, 0);
+  const saved = await ctx.handleDemonstrations(mockDb, manager, {action:'demo-save', demo:{
+    id:pending.id, company_id:'quantis', company_name:'Empresa corrigida', contact_name:'Contato corrigido',
+    phone:'551100000000', email:'EXEMPLO@EXAMPLE.TEST', segment:'Locação', current_scheduled_date:'2026-11-21T14:00:00-03:00'
+  }});
+  assert.equal(saved.lead.id, pending.lead_id);
+  assert.equal(saved.lead.company_name, 'Empresa corrigida');
+  assert.equal(saved.lead.email, 'exemplo@example.test');
+  assert.equal(saved.demo.current_scheduled_date, '2026-11-21T14:00:00-03:00');
+  assert.equal(saved.demo.first_scheduled_date, '2026-11-20T14:00:00-03:00');
   await ctx.handleDemonstrations(mockDb, manager, {action:'demo-archive', demoId:pending.id});
   assert.ok(pending.archived_at);
   assert.equal((await ctx.handleCrmWebhook(mockDb, event, 'quantis_crm_secret_2026')).action,'ignored_archived');

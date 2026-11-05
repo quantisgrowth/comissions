@@ -100,76 +100,7 @@ async function callDemosApi(action, extra = {}) {
     }
   }
 
-  if (action === 'demo-save') {
-    const d = extra.demo || {};
-    const companyId = String(d.company_id || '').trim();
-    if (!companyId) throw Error('Selecione a empresa vinculada à demonstração.');
-
-    let leadId = d.lead_id;
-    if (!leadId) {
-      const leadName = String(d.company_name || '').trim();
-      if (!leadName) throw Error('Informe o nome da empresa/lead.');
-      const leadPayload = {
-        tenant_id: tenantId,
-        company_id: companyId,
-        company_name: leadName,
-        contact_name: d.contact_name ? String(d.contact_name).trim() : null,
-        phone: d.phone ? String(d.phone).trim() : null,
-        email: d.email ? String(d.email).trim().toLowerCase() : null,
-        segment: d.segment ? String(d.segment).trim() : null
-      };
-
-      const leadRes = await fetch(CLOUD_URL + '/rest/v1/cm_leads', {
-        method: 'POST',
-        headers: { ...headers, Prefer: 'return=representation' },
-        body: JSON.stringify(leadPayload)
-      });
-      const leadData = await leadRes.json();
-      if (!leadRes.ok) throw Error(leadData.message || 'Erro ao cadastrar lead.');
-      leadId = leadData[0]?.id;
-    }
-
-    const scheduledDate = d.current_scheduled_date || d.first_scheduled_date || new Date().toISOString();
-    const demoPayload = {
-      tenant_id: tenantId,
-      company_id: companyId,
-      lead_id: leadId,
-      sdr_id: d.sdr_id || null,
-      closer_id: d.closer_id || u?.id,
-      product_id: d.product_id || null,
-      status: d.status || 'agendado',
-      is_completed: d.is_completed === true,
-      current_scheduled_date: scheduledDate,
-      deal_value_mrr: Number(d.deal_value_mrr || 0),
-      deal_value_setup: Number(d.deal_value_setup || 0),
-      notes: d.notes || null,
-      updated_at: new Date().toISOString()
-    };
-
-    if (d.id) {
-      const res = await fetch(CLOUD_URL + '/rest/v1/cm_demonstrations?id=eq.' + encodeURIComponent(d.id), {
-        method: 'PATCH',
-        headers: { ...headers, Prefer: 'return=representation' },
-        body: JSON.stringify(demoPayload)
-      });
-      const data = await res.json();
-      if (!res.ok) throw Error(data.message || 'Erro ao atualizar demonstração.');
-      return { saved: true, demo: data[0] };
-    } else {
-      const res = await fetch(CLOUD_URL + '/rest/v1/cm_demonstrations', {
-        method: 'POST',
-        headers: { ...headers, Prefer: 'return=representation' },
-        body: JSON.stringify({
-          ...demoPayload,
-          first_scheduled_date: scheduledDate,
-          reschedule_count: 0
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) throw Error(data.message || 'Erro ao criar demonstração.');
-      return { saved: true, demo: data[0] };
-    }
-  }
+  if (action === 'demo-save') throw Error('O serviço de edição está indisponível. Atualize a página e tente novamente.');
 
   if (action === 'demo-reschedule') {
     const { demoId, newDate, reason } = extra;
@@ -922,7 +853,7 @@ function openManualDemoModal(demoId = null) {
 
       const scheduledIso = new Date(scheduledAt).toISOString();
 
-      await callDemosApi('demo-save', {
+      const saved = await callDemosApi('demo-save', {
         demo: {
           id: demo?.id || null,
           company_id: companyId,
@@ -942,6 +873,9 @@ function openManualDemoModal(demoId = null) {
         }
       });
 
+      if (!saved?.saved || !saved.demo?.id || !saved.lead?.id) throw Error('O servidor não confirmou todos os dados. Atualize e tente novamente.');
+      demosData.demos = [...demosData.demos.filter(d => d.id !== saved.demo.id), saved.demo];
+      demosData.leads = [...demosData.leads.filter(l => l.id !== saved.lead.id), saved.lead];
       document.getElementById('modal').close();
       toast('Demonstração salva com sucesso!');
       await fetchDemos(true);
