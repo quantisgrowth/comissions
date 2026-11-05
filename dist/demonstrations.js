@@ -9,7 +9,8 @@ let demosData = {
   loaded: false
 };
 
-let demosSubTab = 'pipeline'; // 'pipeline' | 'commissions'
+let demosSubTab = 'dashboard';
+const demoDashboardFilter = { from:'', to:'', agent:'all', company:'all' };
 let demosStatusFilter = 'all';
 let demosSdrFilter = 'all';
 let demosCloserFilter = 'all';
@@ -376,62 +377,12 @@ function renderDemonstrationsModule() {
   const leadsMap = new Map(demosData.leads.map(l => [l.id, l]));
   const commissionsMap = new Map(demosData.commissions.map(c => [c.demonstration_id, c]));
 
-  // Cálculo de Métricas no Topo
-  const totalDemos = demos.length;
-  const completedDemos = demos.filter(d => d.is_completed === true).length;
-  const showRate = totalDemos ? Math.round((completedDemos / totalDemos) * 100) : 0;
-
-  const totalReschedules = demos.reduce((sum, d) => sum + (d.reschedule_count || 0), 0);
-  const avgReschedules = totalDemos ? (totalReschedules / totalDemos).toFixed(1) : '0.0';
-
-  const completedWithCycle = demos.filter(d => d.cycle_days !== null && d.cycle_days !== undefined);
-  const totalCycleDays = completedWithCycle.reduce((sum, d) => sum + Number(d.cycle_days || 0), 0);
-  const avgCycleDays = completedWithCycle.length ? Math.round(totalCycleDays / completedWithCycle.length) : 0;
-
-  // Pipeline Projetado (demos ativas: agendado, aguardando_reagendamento, demo_follow_up, trial)
-  const activeStatuses = ['agendado', 'aguardando_reagendamento', 'demo_follow_up', 'trial'];
-  const projectedPipeline = demos
-    .filter(d => activeStatuses.includes(d.status))
-    .reduce((sum, d) => sum + Number(d.deal_value_mrr || 0) + Number(d.deal_value_setup || 0), 0);
-
-  // Total de Comissões geradas no escopo
-  const relevantDemoIds = new Set(demos.map(d => d.id));
-  const relevantCommissions = demosData.commissions.filter(c => relevantDemoIds.has(c.demonstration_id));
-  const totalCommissions = relevantCommissions.reduce((sum, c) => {
-    if (!isManager && ['Vendedor', 'Colaborador'].includes(u.role)) {
-      const demo = demos.find(d => d.id === c.demonstration_id);
-      let mine = 0;
-      if (demo?.sdr_id === u.id) mine += Number(c.sdr_commission_amount || 0);
-      if (demo?.closer_id === u.id) mine += Number(c.closer_commission_amount || 0);
-      return sum + mine;
-    }
-    return sum + Number(c.sdr_commission_amount || 0) + Number(c.closer_commission_amount || 0);
-  }, 0);
-
-  // Top Metrics Cards
-  const metricsCards = metric([
-    ['Show Rate', `${showRate}%`, `${completedDemos} de ${totalDemos} compareceram`],
-    ['Média de Remarcações', `${avgReschedules}`, `${totalReschedules} remarcações totais`],
-    ['Ciclo Médio (SLA)', `${avgCycleDays} dias`, 'Do 1º agendamento ao fechamento'],
-    ['Pipeline Projetado', money(projectedPipeline), 'MRR + Setup em negociação'],
-    ['Comissões do Período', money(totalCommissions), 'Apuração de vendas ganhas']
-  ]);
-
-  // Sub-abas de navegação
-  const subTabs = `
-    <div style="display:flex;gap:10px;margin-bottom:20px;align-items:center;flex-wrap:wrap;">
-      ${btn('Demonstrações & Pipeline', `switchDemosSubTab('pipeline')`, demosSubTab !== 'pipeline')}
-      ${btn('Painel de Comissões CRM', `switchDemosSubTab('commissions')`, demosSubTab !== 'commissions')}
-      ${isManager ? btn('⚡ Automações & Webhooks (DataCrazy) ↗', "go('Automações')", true) : ''}
-      <span class="live-indicator" style="margin-left:auto;"><span class="live-pulse-dot"></span> Tempo real ativo</span>
-    </div>
-  `;
-
-  if (demosSubTab === 'commissions') {
-    return title('Demonstrações comerciais', 'Controle operacional de agendamentos e apuração de comissões.') +
-      subTabs +
-      renderDemosCommissionsTab(relevantCommissions, demos, leadsMap);
-  }
+  const subTabs = `<nav aria-label="Páginas de demonstrações" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
+    ${btn('Painel de indicadores', "switchDemosSubTab('dashboard')", demosSubTab !== 'dashboard')}
+    ${btn('Agendamentos', "switchDemosSubTab('pipeline')", demosSubTab !== 'pipeline')}
+    ${isManager ? btn('Automações e webhooks ↗', "go('Automações')", true) : ''}
+  </nav>`;
+  if (demosSubTab === 'dashboard') return title('Demonstrações comerciais', 'Acompanhe o desempenho das reuniões e das vendas.') + subTabs + renderDemoDashboard(demos, isManager, u);
 
   // Sub-aba Pipeline e Operacional de Demonstrações
   // Aplicação de Filtros locais
@@ -459,10 +410,9 @@ function renderDemonstrationsModule() {
   return title('Demonstrações comerciais', 'Gerencie demonstrações agendadas, no-shows, remarcações e fechamento de vendas.',
     btn('+ Nova demonstração manual', 'openManualDemoModal()')
   ) +
-  metricsCards +
   subTabs +
   toolbar +
-  tableHtml;
+  tableHtml + `<details style="margin-top:18px"><summary>Comissões CRM</summary>${renderDemosCommissionsTab(demosData.commissions.filter(c => demos.some(d => d.id === c.demonstration_id)), demos, leadsMap)}</details>`;
 }
 
 // Barra de Filtros Operacionais
@@ -532,15 +482,12 @@ function renderDemosTable(demos, leadsMap, commissionsMap) {
       </button>
     `;
 
-    // Toggle rápido de comparecimento (Show Rate)
     const isCompleted = d.is_completed === true;
-    const showRateToggle = `
-      <button type="button" class="btn" onclick="toggleDemoCompleted('${esc(d.id)}', ${isCompleted})"
-        style="padding:4px 9px;font-size:11px;border-radius:6px;background:${isCompleted ? '#dcfce7' : '#f3f4f6'};color:${isCompleted ? '#15803d' : '#6b7280'};border:1px solid ${isCompleted ? '#86efac' : '#d1d5db'};font-weight:600;"
-        title="Alternar comparecimento à demonstração">
-        ${isCompleted ? '✓ Realizada' : '✗ Não realizada'}
-      </button>
-    `;
+    const [icon, label, color] = isCompleted ? ['✓','Realizada','#15803d']
+      : d.status === 'aguardando_reagendamento' ? ['↻','Aguardando reagendamento','#a16207']
+      : ['perdido','cancelado'].includes(d.status) ? ['−','Encerrada sem realização','#64748b']
+      : ['◷','Comparecimento pendente','#475569'];
+    const showRateToggle = `<button type="button" class="icon-action" style="color:${color};font-size:17px" aria-label="${label} · alterar comparecimento" data-tooltip="${label}" title="${label}" onclick="toggleDemoCompleted('${actionId(d.id)}', ${isCompleted})"><span aria-hidden="true">${icon}</span></button>`;
 
     // Status com badge e menu rápido de transição
     const statusPill = `
@@ -649,7 +596,7 @@ function renderDemosTable(demos, leadsMap, commissionsMap) {
         'Reunião e ciclo',
         'Remarcações',
         'Responsáveis',
-        'Show Rate',
+        'Comparecimento',
         'Status',
         'Proposta',
         'Ações'
@@ -1491,4 +1438,70 @@ function openArchiveDemo(id) {
     render();
     toast('Agendamento excluído.');
   });
+}
+
+function setDemoDashboardFilter(key, value) {
+  if (!Object.prototype.hasOwnProperty.call(demoDashboardFilter, key)) return;
+  demoDashboardFilter[key] = value;
+  render();
+}
+
+function demoDashboardDay(iso) {
+  if (!iso || !Number.isFinite(Date.parse(iso))) return '';
+  return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(iso));
+}
+
+function renderDemoDashboard(demos, isManager, u) {
+  const f = demoDashboardFilter;
+  const ids = new Set(demos.flatMap(d => [d.sdr_id,d.closer_id]));
+  const agents = state.users.filter(person => ids.has(person.id));
+  const companies = state.companies.filter(c => canAccess(c.id) && (company === 'all' || c.id === company));
+  const selectFilter = (key, label, options) => `<label>${label}<select onchange="setDemoDashboardFilter('${key}',this.value)"><option value="all">Todos</option>${options.map(x => `<option value="${esc(x.id)}" ${f[key] === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>`;
+  const dateFilter = (key, label) => `<label>${label}<input type="date" value="${esc(f[key])}" onchange="setDemoDashboardFilter('${key}',this.value)"></label>`;
+  const rows = demos.filter(d => {
+    const day = demoDashboardDay(d.current_scheduled_date);
+    return (f.company === 'all' || f.company === d.company_id) &&
+      (f.agent === 'all' || [d.sdr_id,d.closer_id].includes(f.agent)) &&
+      ((!f.from && !f.to) || (day && (!f.from || day >= f.from) && (!f.to || day <= f.to)));
+  });
+  const total = rows.length;
+  const attended = rows.filter(d => d.is_completed).length;
+  const rate = total ? Math.round(attended / total * 100) : 0;
+  const rem = rows.reduce((n,d) => n + Number(d.reschedule_count || 0),0);
+  const cycles = rows.filter(d => d.cycle_days != null).map(d => Number(d.cycle_days));
+  const cycle = cycles.length ? Math.round(cycles.reduce((n,d)=>n+d,0)/cycles.length) : 0;
+  const active = rows.filter(d => ['agendado','aguardando_reagendamento','demo_follow_up','trial'].includes(d.status));
+  const mrr = active.reduce((n,d)=>n+Number(d.deal_value_mrr||0),0);
+  const setup = active.reduce((n,d)=>n+Number(d.deal_value_setup||0),0);
+  const rowMap = new Map(rows.map(d=>[d.id,d]));
+  let sdr = 0, closer = 0;
+  for (const c of demosData.commissions) {
+    const d = rowMap.get(c.demonstration_id);
+    if (!d) continue;
+    if (isManager || d.sdr_id === u.id) sdr += Number(c.sdr_commission_amount||0);
+    if (isManager || d.closer_id === u.id) closer += Number(c.closer_commission_amount||0);
+  }
+  const bars = (items, formatter = String) => {
+    const max = Math.max(1,...items.map(x=>x[1]));
+    return items.map(([label,value],i)=>`<div class="demo-chart-row"><span>${label}</span><strong>${formatter(value)}</strong><div class="demo-track"><i style="width:${Math.max(0,value/max*100)}%;background:${i%2?'#f472b6':'#67e8f9'}"></i></div></div>`).join('');
+  };
+  const card = (label,value,content) => `<section class="demo-chart"><h2>${label}</h2><strong class="demo-chart-value">${value}</strong>${content}</section>`;
+  return `<style>
+    .demo-dashboard-filters,.demo-dashboard-grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr))}
+    .demo-dashboard-filters{margin-bottom:16px}.demo-dashboard-filters label{display:grid;gap:6px;min-width:0}
+    .demo-chart{background:#12242d;color:#f8fafc;border-radius:14px;padding:18px;min-width:0}.demo-chart h2{font-size:14px;color:#bae6fd}.demo-chart-value{display:block;font-size:26px;margin:8px 0 14px}
+    .demo-chart-row{display:grid;grid-template-columns:1fr auto;gap:6px;margin:10px 0;font-size:12px}.demo-track{grid-column:1/-1;height:8px;border-radius:8px;background:#293b46;overflow:hidden}.demo-track i{display:block;height:100%;border-radius:8px;transform-origin:left;animation:demo-bar .5s ease-out both}
+    .demo-ring{display:block;margin:0 auto;max-width:110px}.demo-ring circle:last-child{animation:demo-ring .55s ease-out both}
+    @keyframes demo-bar{from{transform:scaleX(0)}}@keyframes demo-ring{from{stroke-dashoffset:100}}
+    @media(prefers-reduced-motion:reduce){.demo-track i,.demo-ring circle:last-child{animation:none}}
+    </style><section class="panel"><div class="demo-dashboard-filters">
+    ${dateFilter('from','Reunião a partir de')}${dateFilter('to','Reunião até')}${selectFilter('agent','Agente (SDR ou vendedor)',agents)}${selectFilter('company','Empresa',companies)}
+    </div><p class="small">Filtro pelo dia da reunião, horário de Brasília. Reuniões sem data aparecem quando não há filtro de período.</p></section>
+    ${!total ? '<p role="status">Nenhuma demonstração para esses filtros.</p>' : `<div class="demo-dashboard-grid" aria-live="polite">
+      ${card('Taxa de comparecimento',rate+'%',`<svg class="demo-ring" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="40" fill="none" stroke="#293b46" stroke-width="10"/><circle cx="50" cy="50" r="40" pathLength="100" fill="none" stroke="#67e8f9" stroke-width="10" stroke-dasharray="100" stroke-dashoffset="${100-rate}" transform="rotate(-90 50 50)"/></svg><span>${attended} realizadas de ${total} demonstrações</span>`)}
+      ${card('Média de remarcações',(rem/total).toLocaleString('pt-BR',{maximumFractionDigits:1}),bars([['Sem remarcações',rows.filter(d=>!d.reschedule_count).length],['Remarcadas',rows.filter(d=>d.reschedule_count>0).length]]))}
+      ${card('Ciclo médio',cycles.length ? cycle+' dias' : 'Sem dados',bars([['Até 7 dias',cycles.filter(n=>n<=7).length],['Mais de 7 dias',cycles.filter(n=>n>7).length]]))}
+      ${card('Pipeline projetado',money(mrr+setup),bars([['MRR',mrr],['Implantação',setup]],money))}
+      ${card('Comissões do período',money(sdr+closer),bars([['SDR',sdr],['Vendedor',closer]],money))}
+    </div>`}`;
 }
