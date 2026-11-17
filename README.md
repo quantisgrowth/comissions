@@ -62,3 +62,5 @@ Propostas preservam uma cópia do modelo, recursos e preços. Alterar catálogo 
 **Publicação da API:** enviar `proposals-entry.ts` como `index.ts`, junto de `proposals.ts` e `proposal-model.js`; a função valida autenticação internamente. As tabelas não concedem leitura ou escrita direta a anon/authenticated. Para atualizar o restante da aplicação, usar o workflow Pages existente.
 
 Verificação: `node checks/proposals.cjs`, mais os checks existentes. Testes de UI com dados fictícios devem permanecer fora da publicação.
+
+A migração `allow_proposals_in_profile_modules` (`backend/proposal-permissions.sql`) também é necessária: a restrição `cm_profiles_modules_check` precisa reconhecer Propostas para permitir salvar o acesso de colaboradores. Ela não concede o módulo a ninguém; a atribuição continua no cadastro de acessos.
