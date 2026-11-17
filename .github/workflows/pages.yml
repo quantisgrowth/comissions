@@ -48,6 +48,9 @@ jobs:
           node checks/financial-parity.cjs
           node checks/commission-schedule.cjs
           node checks/commission-payer.cjs
+          node --check dist/proposals.js
+          node --check dist/proposal-document.js
+          node checks/proposals.cjs
           node checks/saas-tenants-teams.cjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

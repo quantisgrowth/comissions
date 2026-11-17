@@ -13,7 +13,7 @@ const db=createClient(Deno.env.get('SUPABASE_URL')!,Deno.env.get('SUPABASE_SERVI
 const site='https://quantisgrowth.github.io/comissions/';
 const collections=['companies','products','contracts','invoices','goals','extraCommissions'];
 const sha=async(s:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))).map(b=>b.toString(16).padStart(2,'0')).join('');
-const moduleNames=['Visão geral','Empresas','Demonstrações','Contratos','Recebíveis','Comissões','Produtos e regras','Metas','Usuários e acessos'];
+const moduleNames=['Visão geral','Empresas','Demonstrações','Contratos','Recebíveis','Comissões','Produtos e regras','Metas','Propostas','Usuários e acessos'];
 const modulesFor=(p:any)=>p.role==='Administrador'?moduleNames:(p.modules|| (p.role==='Gestor'?moduleNames.filter(m=>m!=='Usuários e acessos'):['Vendedor','Colaborador','Desenvolvedor'].includes(p.role)?['Visão geral','Demonstrações','Contratos','Comissões']:['Comissões'])).filter((m:string)=>moduleNames.includes(m)&&m!=='Usuários e acessos');
 const hasModule=(p:any,m:string)=>modulesFor(p).includes(m);
 const viewProfile=(p:any)=>({id:p.id,name:p.name,email:p.email,role:p.role,all:p.all_companies,companies:p.companies,active:p.active,modules:modulesFor(p),activated:!!p.auth_id,tenant_id:p.tenant_id||'00000000-0000-0000-0000-000000000001',is_superadmin:!!p.is_superadmin});

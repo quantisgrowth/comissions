@@ -46,3 +46,19 @@ Em telas de até 900 px, a interface usa menu lateral recolhível e atalhos infe
 Em Usuários e acessos, usuários ativos sem acesso ativado mostram o botão Gerar novo convite. Somente o administrador pode renovar. O link vale por 24 horas, invalida convites pendentes anteriores e não altera empresas, cargo ou módulos. Copie o link exibido e envie diretamente à pessoa. O token não é salvo em texto puro no banco nem incluído nos registros de auditoria.
 
 A ativação por convite oferece Mostrar/Ocultar nos campos de senha e confirmação. Cada convite admite três tentativas de definição de senha; divergências e senhas rejeitadas consomem uma tentativa. Erros de conexão não consomem tentativas. A terceira falha revoga o link; um novo convite começa com zero tentativas. O contador fica no servidor e não reinicia ao atualizar a página. Para bases anteriores, aplicar `backend/invite-attempts.sql` antes de implantar o backend.
+
+## Propostas comerciais
+
+O módulo **Propostas** tem catálogo e modelo por empresa. Administradores acessam automaticamente; os demais usuários precisam da permissão Propostas e vínculo com a empresa. Gestores mantêm o catálogo e acompanham a empresa; outros perfis geram e consultam suas próprias propostas.
+
+- `dist/proposal-model.js`: validação e cálculos em centavos; cópia idêntica no backend.
+- `dist/proposals.js`, `proposal-document.js`, `proposals.css`: editor, prévia e impressão em PDF A4 paisagem.
+- `backend/proposals-entry.ts`: entrada da Edge Function `proposals-api`, autenticando o token com Supabase Auth.
+- `backend/proposals.ts`: escopo de empresa/tenant, autoria, catálogo gerencial e concorrência por versão.
+- `backend/proposals.sql`: tabelas privadas, índices, RLS e referência comercial Quantis. Aplicada como `company_proposal_catalog_and_documents`.
+
+Propostas preservam uma cópia do modelo, recursos e preços. Alterar catálogo não altera documentos existentes. O status de aceite é um registro manual da equipe, sem assinatura eletrônica. A emissão não cria recebíveis nem comissões. A implantação exige confirmação explícita, inclusive quando isenta. Descontos temporários são calculados por item e incluídos na projeção de 12 meses.
+
+**Publicação da API:** enviar `proposals-entry.ts` como `index.ts`, junto de `proposals.ts` e `proposal-model.js`; a função valida autenticação internamente. As tabelas não concedem leitura ou escrita direta a anon/authenticated. Para atualizar o restante da aplicação, usar o workflow Pages existente.
+
+Verificação: `node checks/proposals.cjs`, mais os checks existentes. Testes de UI com dados fictícios devem permanecer fora da publicação.
